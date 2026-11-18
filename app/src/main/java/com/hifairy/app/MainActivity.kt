@@ -28,6 +28,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.animation.core.*
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInHorizontally
@@ -79,6 +82,9 @@ private object ThemeTokens {
     val userBubble = Color(0xFF293765)
     val codeBackground = 0xFF080914.toInt()
     val reasoningBubble = Color(0xFF101B27)
+    val historyCard = Color(0xFF20263E)
+    val activeHistoryCard = Color(0xFF0B1022)
+    val drawerVeil = Color(0x33C8D5FF)
 }
 
 private object TypeTokens {
@@ -288,7 +294,10 @@ class MainActivity : ComponentActivity() {
                     introPhase = "ready"
                 }
             }
-            Box(Modifier.fillMaxSize()) {
+            BoxWithConstraints(Modifier.fillMaxSize().background(ThemeTokens.background)) {
+            val chatOffset by animateDpAsState(if (historyOpen) maxWidth * 0.75f else 0.dp, tween(360), label = "chat drawer offset")
+            val chatScale by animateFloatAsState(if (historyOpen) 0.96f else 1f, tween(360), label = "chat depth")
+            val chatRotation by animateFloatAsState(if (historyOpen) -5f else 0f, tween(360), label = "chat perspective")
             if (introPhase == "boot" || introPhase == "transition") {
                 Box(Modifier.fillMaxSize().background(Color(0xFF02050D))) {
                     AndroidView(
@@ -302,7 +311,16 @@ class MainActivity : ComponentActivity() {
                     if (introPhase == "boot") Text("SKIP", color = Color(0xD9CEF0FF), fontSize = 10.sp, fontFamily = TypeTokens.interfaceFont, letterSpacing = 2.6.sp, modifier = Modifier.align(Alignment.TopEnd).padding(20.dp).background(Color(0x8C061022)).border(1.dp, Color(0x616EDCFF)).clickable { introPhase = "transition" }.padding(horizontal = 14.dp, vertical = 7.dp))
                 }
             } else {
-            Column(Modifier.fillMaxSize().background(ThemeTokens.background).padding(20.dp)) {
+            Column(Modifier.offset(x = chatOffset).graphicsLayer {
+                scaleX = chatScale
+                scaleY = chatScale
+                rotationY = chatRotation
+                transformOrigin = TransformOrigin(0f, 0.5f)
+                cameraDistance = 24f * density
+                shadowElevation = if (historyOpen) 14.dp.toPx() else 0f
+                shape = RoundedCornerShape(20.dp)
+                clip = historyOpen
+            }.fillMaxSize().background(ThemeTokens.background).padding(20.dp)) {
                 if (page == "settings") {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text("‹", color = ThemeTokens.accent, fontSize = 34.sp, modifier = Modifier.clickable { page = "chat"; historyOpen = true }.padding(end = 24.dp))
@@ -396,14 +414,15 @@ class MainActivity : ComponentActivity() {
             }
             }
             if (introPhase == "ready" || introPhase == "greeting") {
-                if (historyOpen) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)).clickable { historyOpen = false })
+                if (historyOpen) Box(Modifier.offset(x = chatOffset).fillMaxSize().background(ThemeTokens.drawerVeil).clickable(onClickLabel = "收起历史对话") { historyOpen = false })
                 AnimatedVisibility(visible = historyOpen, enter = slideInHorizontally { -it }, exit = slideOutHorizontally { -it }) {
-                    Column(Modifier.fillMaxHeight().fillMaxWidth(0.55f).background(ThemeTokens.surface).border(1.dp, Color(0xFF25335C)).padding(horizontal = 14.dp, vertical = 24.dp)) {
+                    val drawerShape = RoundedCornerShape(topEnd = 20.dp, bottomEnd = 20.dp)
+                    Column(Modifier.fillMaxHeight().fillMaxWidth(0.75f).shadow(24.dp, drawerShape).background(ThemeTokens.surface, drawerShape).border(1.dp, Color(0xFF384878), drawerShape).padding(horizontal = 16.dp, vertical = 24.dp)) {
                         Text("历史对话", color = ThemeTokens.text, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                         Text("＋  新对话", color = ThemeTokens.accent, modifier = Modifier.fillMaxWidth().clickable { newChat() }.padding(vertical = 22.dp))
                         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                             sessions.asReversed().forEach { session ->
-                                Column(Modifier.fillMaxWidth().padding(bottom = 8.dp).background(ThemeTokens.background, RoundedCornerShape(12.dp)).padding(10.dp)) {
+                                Column(Modifier.fillMaxWidth().padding(bottom = 8.dp).background(if (session.id == currentSessionId) ThemeTokens.activeHistoryCard else ThemeTokens.historyCard, RoundedCornerShape(12.dp)).padding(10.dp)) {
                                     if (renamingId == session.id) {
                                         TextField(renameDraft, onValueChange = { renameDraft = it.take(50) }, modifier = Modifier.fillMaxWidth(), colors = darkFieldColors())
                                         Text("保存", color = ThemeTokens.accent, modifier = Modifier.clickable { renameSession(session.id, renameDraft); renamingId = 0L }.padding(top = 8.dp))
