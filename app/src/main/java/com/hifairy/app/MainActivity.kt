@@ -93,7 +93,10 @@ private object ThemeTokens {
     val raisedCardRim = Color(0xFF59698E)
     val pressedCard = Color(0xFF0D1428)
     val pressedCardRim = Color(0xFF344363)
-    val pressedInset = Color(0xCC030715)
+    val pressedInset = Color(0xFF020611)
+    val raisedTopEdge = Color(0xFF8FA6D4)
+    val raisedBottomEdge = Color(0xFF11182B)
+    val pressedBottomEdge = Color(0xFF637AA7)
     val drawerVeil = Color(0xFFC8D5FF)
 }
 
@@ -247,18 +250,25 @@ private fun HistorySessionSurface(selected: Boolean, content: @Composable Column
     val rim = if (selected) ThemeTokens.pressedCardRim else ThemeTokens.raisedCardRim
     Column(
         Modifier.fillMaxWidth().padding(bottom = 12.dp)
-            .then(if (selected) Modifier else Modifier.shadow(9.dp, shape, ambientColor = Color(0xCC020410), spotColor = Color(0xFF020410)))
+            .then(if (selected) Modifier else Modifier.shadow(15.dp, shape, ambientColor = Color(0xCC020410), spotColor = Color(0xFF020410)))
             .drawWithContent {
                 drawContent()
+                val edgeInset = 13.dp.toPx()
                 if (selected) {
-                    val inset = 3.dp.toPx()
-                    drawRoundRect(
-                        color = ThemeTokens.pressedInset,
-                        topLeft = Offset(inset, inset),
-                        size = Size(size.width - inset * 2, size.height - inset * 2),
-                        cornerRadius = CornerRadius(11.dp.toPx()),
-                        style = Stroke(width = 5.dp.toPx())
-                    )
+                    repeat(4) { layer ->
+                        val inset = (2f + layer * 1.4f).dp.toPx()
+                        drawRoundRect(
+                            color = ThemeTokens.pressedInset.copy(alpha = 0.40f - layer * 0.08f),
+                            topLeft = Offset(inset, inset),
+                            size = Size(size.width - inset * 2, size.height - inset * 2),
+                            cornerRadius = CornerRadius((13f - layer * 1.3f).dp.toPx()),
+                            style = Stroke(width = 2.4.dp.toPx())
+                        )
+                    }
+                    drawLine(ThemeTokens.pressedBottomEdge.copy(alpha = 0.70f), Offset(edgeInset, size.height - 2.dp.toPx()), Offset(size.width - edgeInset, size.height - 2.dp.toPx()), 1.5.dp.toPx(), cap = StrokeCap.Round)
+                } else {
+                    drawLine(ThemeTokens.raisedTopEdge.copy(alpha = 0.82f), Offset(edgeInset, 1.5.dp.toPx()), Offset(size.width - edgeInset, 1.5.dp.toPx()), 1.5.dp.toPx(), cap = StrokeCap.Round)
+                    drawLine(ThemeTokens.raisedBottomEdge, Offset(edgeInset, size.height - 1.5.dp.toPx()), Offset(size.width - edgeInset, size.height - 1.5.dp.toPx()), 1.5.dp.toPx(), cap = StrokeCap.Round)
                 }
             }
             .background(fill, shape).border(1.dp, rim, shape).padding(12.dp),
