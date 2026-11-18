@@ -79,6 +79,8 @@ import io.noties.markwon.ext.tables.TablePlugin
 import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
 import io.noties.markwon.ext.tasklist.TaskListPlugin
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private object ThemeTokens {
     val background = Color(0xFF070818)
@@ -302,6 +304,10 @@ class MainActivity : ComponentActivity() {
     private var keyDraft by mutableStateOf("")
     private var modelDraft by mutableStateOf("deepseek-flash")
     private var effortDraft by mutableStateOf("high")
+    private val availableModels = mutableStateListOf<DeepSeekModel>()
+    private var modelsLoading by mutableStateOf(false)
+    private var modelsError by mutableStateOf("")
+    private var modelsRefresh by mutableIntStateOf(0)
     private var displayNameDraft by mutableStateOf("绳匠")
     private var avatarChoice by mutableStateOf("ling")
     private val pickAvatar = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -329,6 +335,29 @@ class MainActivity : ComponentActivity() {
         setContent {
             val context = LocalContext.current
             val scope = rememberCoroutineScope()
+            LaunchedEffect(page, modelsRefresh) {
+                if (page == "settings") {
+                    val key = withContext(Dispatchers.IO) { secureSettings.apiKey() }
+                    if (key.isNotEmpty()) {
+                        modelsLoading = true
+                        modelsError = ""
+                        try {
+                            val fetched = withContext(Dispatchers.IO) { DeepSeekModels.fetch(key) }
+                            availableModels.clear()
+                            availableModels.addAll(fetched)
+                            if (fetched.isEmpty()) modelsError = "当前账户没有可用模型"
+                        } catch (error: Exception) {
+                            availableModels.clear()
+                            modelsError = error.message ?: "获取模型列表失败，请检查网络"
+                        } finally {
+                            modelsLoading = false
+                        }
+                    } else {
+                        availableModels.clear()
+                        modelsError = "保存 API Key 后可获取模型列表"
+                    }
+                }
+            }
             val drawerWidthPx = with(LocalDensity.current) { LocalConfiguration.current.screenWidthDp.dp.toPx() * 0.75f }
             val drawerProgress = remember { Animatable(0f) }
             var dragProgress by remember { mutableFloatStateOf(0f) }
@@ -487,13 +516,37 @@ class MainActivity : ComponentActivity() {
                                 Text("API KEY", color = ThemeTokens.secondary, fontSize = 11.sp, fontFamily = TypeTokens.terminalFont)
                                 TextField(value = keyDraft, onValueChange = { keyDraft = it }, visualTransformation = PasswordVisualTransformation(), placeholder = { Text(if (secureSettings.apiKey().isEmpty()) "输入 API Key" else "已保存 · 输入新 Key 可替换", color = ThemeTokens.secondary) }, modifier = Modifier.fillMaxWidth(), colors = darkFieldColors())
                                 Text("密钥仅保存在本机的加密存储中", color = ThemeTokens.secondary, fontSize = 12.sp)
-                                Button(onClick = { if (keyDraft.isNotBlank()) { secureSettings.saveApiKey(keyDraft.trim()); keyDraft = ""; status = "API Key 已加密保存" } }) { Text("保存密钥") }
+                                Button(onClick = { if (keyDraft.isNotBlank()) { secureSettings.saveApiKey(keyDraft.trim()); keyDraft = ""; status = "API Key 已加密保存"; modelsRefresh++ } }) { Text("保存密钥") }
                             }
                             SettingsCard("MODEL // RESPONSE", "回答偏好") {
                                 Text("模型", color = ThemeTokens.secondary, fontSize = 12.sp)
-                                TextField(value = modelDraft, onValueChange = { modelDraft = it; secureSettings.model = it }, modifier = Modifier.fillMaxWidth(), colors = darkFieldColors())
+                                var modelMenuExpanded by remember { mutableStateOf(false) }
+                                val selectedModel = availableModels.firstOrNull { it.id == modelDraft }
+                                Box {
+                                    Text("${selectedModel?.name ?: modelDraft}  ▾", color = ThemeTokens.text, fontSize = 15.sp,
+                                        modifier = Modifier.fillMaxWidth().background(ThemeTokens.surface, RoundedCornerShape(10.dp))
+                                            .clickable(enabled = availableModels.isNotEmpty()) { modelMenuExpanded = true }
+                                            .padding(14.dp))
+                                    DropdownMenu(expanded = modelMenuExpanded, onDismissRequest = { modelMenuExpanded = false }, modifier = Modifier.background(ThemeTokens.surface)) {
+                                        availableModels.forEach { model ->
+                                            DropdownMenuItem(text = { Column { Text(model.name, color = ThemeTokens.text); Text(model.id, color = ThemeTokens.secondary, fontSize = 11.sp) } }, onClick = {
+                                                modelDraft = model.id
+                                                secureSettings.model = model.id
+                                                if (effortDraft != "none" && effortDraft !in model.effortLevels) {
+                                                    effortDraft = model.defaultEffort ?: model.effortLevels.firstOrNull() ?: "none"
+                                                    secureSettings.effort = effortDraft
+                                                }
+                                                modelMenuExpanded = false
+                                            })
+                                        }
+                                    }
+                                }
+                                if (modelsLoading) Text("正在获取可用模型…", color = ThemeTokens.secondary, fontSize = 12.sp)
+                                if (modelsError.isNotEmpty()) Text(modelsError, color = ThemeTokens.secondary, fontSize = 12.sp)
+                                Text("刷新模型列表", color = ThemeTokens.accent, fontSize = 12.sp, modifier = Modifier.clickable { modelsRefresh++ }.padding(vertical = 6.dp))
                                 Text("思考强度", color = ThemeTokens.secondary, fontSize = 12.sp)
-                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("none", "low", "high", "max").forEach { option -> Text(option, color = if (effortDraft == option) ThemeTokens.background else ThemeTokens.secondary, fontSize = 12.sp, modifier = Modifier.background(if (effortDraft == option) ThemeTokens.accent else ThemeTokens.background, RoundedCornerShape(10.dp)).clickable { effortDraft = option; secureSettings.effort = option }.padding(horizontal = 10.dp, vertical = 9.dp)) } }
+                                val effortOptions = selectedModel?.let { listOf("none") + it.effortLevels } ?: listOf(effortDraft)
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { effortOptions.forEach { option -> Text(option, color = if (effortDraft == option) ThemeTokens.background else ThemeTokens.secondary, fontSize = 12.sp, modifier = Modifier.background(if (effortDraft == option) ThemeTokens.accent else ThemeTokens.background, RoundedCornerShape(10.dp)).clickable(enabled = selectedModel != null) { effortDraft = option; secureSettings.effort = option }.padding(horizontal = 10.dp, vertical = 9.dp)) } }
                             }
                             SettingsCard("VOICE // DEVICE", "语音设备测试") {
                                 Text(status, color = ThemeTokens.secondary, fontSize = 13.sp)
