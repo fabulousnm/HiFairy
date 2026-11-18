@@ -7,6 +7,7 @@ import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.widget.VideoView
 import android.os.Build
+import android.content.pm.ActivityInfo
 import java.io.File
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -61,6 +62,7 @@ class MainActivity : ComponentActivity() {
     private var page by mutableStateOf("chat")
     private var introPhase by mutableStateOf("boot")
     private var draft by mutableStateOf("")
+    private val messages = mutableStateListOf<String>()
     private val recordingFile by lazy { File(cacheDir, "voice-check.m4a") }
     private val requestMicrophone = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         microphoneGranted = it
@@ -74,9 +76,10 @@ class MainActivity : ComponentActivity() {
             val pulse = rememberInfiniteTransition(label = "eye pulse")
             val eyeScale by pulse.animateFloat(initialValue = 0.97f, targetValue = 1.04f, animationSpec = infiniteRepeatable(tween(1700, easing = EaseInOutSine), RepeatMode.Reverse), label = "eye scale")
             LaunchedEffect(introPhase) {
+                requestedOrientation = if (introPhase == "boot") ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                 if (introPhase == "greeting") {
                     kotlinx.coroutines.delay(2100)
-                    introPhase = "dock"
+                    introPhase = "ready"
                 }
             }
             if (introPhase == "boot") {
@@ -97,34 +100,33 @@ class MainActivity : ComponentActivity() {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("☰", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { page = "history" })
                     Text("H.D.D Ⅲ", color = ThemeTokens.text, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.brandTracking)
-                    Text("＋", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { page = "chat"; draft = "" })
+                    Text("＋", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { page = "chat"; draft = ""; messages.clear() })
                 }
                 when (page) {
                     "chat" -> {
-                        if (introPhase == "dock") {
-                            Row(Modifier.fillMaxWidth().padding(top = 28.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Image(painterResource(R.drawable.fairy_eye), contentDescription = "Fairy 常驻眼徽", modifier = Modifier.size(54.dp).scale(eyeScale))
-                                Spacer(Modifier.width(12.dp))
-                                Text("FAIRY // ONLINE", color = ThemeTokens.accent, fontSize = 10.sp, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.eyebrowTracking)
-                            }
-                        }
-                        Column(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                            if (introPhase == "greeting") {
-                            Image(painterResource(R.drawable.fairy_eye), contentDescription = "Fairy 眼徽", modifier = Modifier.size(if (introPhase == "greeting") 190.dp else 154.dp).scale(eyeScale))
-                            Spacer(Modifier.height(24.dp))
-                            Text("晚上好，绳匠。", color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, letterSpacing = TypeTokens.labelTracking)
-                            Spacer(Modifier.height(8.dp))
-                            Text("FAIRY // READY", color = ThemeTokens.secondary, fontSize = 10.sp, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.eyebrowTracking)
+                        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                            val hasConversation = messages.isNotEmpty()
+                            val eyeSize by animateDpAsState(if (hasConversation) 54.dp else 154.dp, tween(550), label = "eye size")
+                            val eyeX by animateDpAsState(if (hasConversation) 0.dp else (maxWidth - eyeSize) / 2, tween(550), label = "eye x")
+                            val eyeY by animateDpAsState(if (hasConversation) 28.dp else (maxHeight - eyeSize) / 2, tween(550), label = "eye y")
+                            Image(painterResource(R.drawable.fairy_eye), contentDescription = "Fairy 眼徽", modifier = Modifier.offset(eyeX, eyeY).size(eyeSize).scale(eyeScale))
+                            if (hasConversation) {
+                                Text("FAIRY // ONLINE", color = ThemeTokens.accent, fontSize = 10.sp, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.eyebrowTracking, modifier = Modifier.offset(70.dp, 46.dp))
+                                Column(Modifier.fillMaxWidth().padding(top = 110.dp)) {
+                                    messages.forEach { message -> Text(message, color = ThemeTokens.text, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) }
+                                }
+                            } else {
+                                Text("晚上好，绳匠。", color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, letterSpacing = TypeTokens.labelTracking, modifier = Modifier.align(Alignment.Center).offset(y = 120.dp))
                             }
                         }
                         Row(Modifier.fillMaxWidth().background(ThemeTokens.surface, RoundedCornerShape(18.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             TextField(value = draft, onValueChange = { draft = it }, placeholder = { Text("向 Fairy 提问…") }, modifier = Modifier.weight(1f), colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent))
-                            Text("➤", color = ThemeTokens.accent, fontSize = 25.sp)
+                            Text("➤", color = ThemeTokens.accent, fontSize = 25.sp, modifier = Modifier.clickable { if (draft.isNotBlank()) { messages.add(draft.trim()); draft = "" } })
                         }
                     }
                     "history" -> {
                         Text("历史对话", color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, modifier = Modifier.padding(top = 32.dp))
-                        Text("新对话", color = ThemeTokens.accent, modifier = Modifier.fillMaxWidth().clickable { page = "chat" }.padding(vertical = 24.dp))
+                        Text("新对话", color = ThemeTokens.accent, modifier = Modifier.fillMaxWidth().clickable { page = "chat"; messages.clear() }.padding(vertical = 24.dp))
                         Spacer(Modifier.weight(1f))
                         Text("设置  ›", color = ThemeTokens.text, modifier = Modifier.fillMaxWidth().clickable { page = "settings" }.padding(vertical = 20.dp))
                     }
