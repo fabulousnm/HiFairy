@@ -39,6 +39,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.draw.scale
@@ -124,7 +126,14 @@ private fun ChatAvatar(role: String, avatar: String, modifier: Modifier = Modifi
 }
 
 @Composable
-private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String, onCopy: () -> Unit, onEdit: () -> Unit) {
+private fun MessageAction(symbol: String, label: String, onClick: () -> Unit) {
+    Box(Modifier.size(36.dp).semantics { contentDescription = label }.clickable(onClickLabel = label, onClick = onClick), contentAlignment = Alignment.Center) {
+        Text(symbol, color = ThemeTokens.secondary, fontSize = 21.sp)
+    }
+}
+
+@Composable
+private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String, showRegenerate: Boolean, onCopy: () -> Unit, onEdit: () -> Unit, onRegenerate: () -> Unit) {
     val isUser = message.role == "user"
     var reasoningExpanded by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Top) {
@@ -143,8 +152,11 @@ private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String
                     MarkdownMessage(message.content.ifBlank { "正在思考…" }, Modifier.fillMaxWidth())
                 }
             }
-            if (!isUser && message.content.isNotBlank()) Text("复制回答", color = ThemeTokens.secondary, fontSize = 11.sp, modifier = Modifier.clickable(onClick = onCopy).padding(top = 6.dp))
-            if (isUser) Text("编辑", color = ThemeTokens.secondary, fontSize = 11.sp, modifier = Modifier.clickable(onClick = onEdit).padding(top = 6.dp))
+            if (!isUser && message.content.isNotBlank()) Row(verticalAlignment = Alignment.CenterVertically) {
+                MessageAction("⧉", "复制回答", onCopy)
+                if (showRegenerate) MessageAction("↻", "重新生成回答", onRegenerate)
+            }
+            if (isUser) MessageAction("✎", "编辑消息", onEdit)
         }
         if (isUser) ChatAvatar("user", avatar, Modifier.size(36.dp))
     }
@@ -282,8 +294,10 @@ class MainActivity : ComponentActivity() {
                                     messages.forEachIndexed { index, message ->
                                         key(currentSessionId, index) {
                                             ChatBubble(message, displayNameDraft, avatarChoice,
+                                                showRegenerate = index == messages.lastIndex && !sending,
                                                 onCopy = { (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Fairy 回答", message.content)) },
-                                                onEdit = { stopGeneration(); editingMessageIndex = index; draft = message.content })
+                                                onEdit = { stopGeneration(); editingMessageIndex = index; draft = message.content },
+                                                onRegenerate = { regenerate() })
                                         }
                                     }
                                 }
@@ -299,7 +313,6 @@ class MainActivity : ComponentActivity() {
                             TextField(value = draft, onValueChange = { draft = it }, placeholder = { Text("向 Fairy 提问…", color = ThemeTokens.secondary) }, modifier = Modifier.weight(1f), colors = TextFieldDefaults.colors(focusedTextColor = ThemeTokens.text, unfocusedTextColor = ThemeTokens.text, cursorColor = ThemeTokens.accent, focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
                             Text(if (sending) "■" else "➤", color = ThemeTokens.accent, fontSize = 25.sp, modifier = Modifier.clickable { if (sending) stopGeneration() else sendMessage() })
                         }
-                        if (messages.lastOrNull()?.role == "assistant" && !sending) Text("重新生成回答", color = ThemeTokens.secondary, fontSize = 11.sp, modifier = Modifier.align(Alignment.End).clickable { regenerate() }.padding(top = 6.dp))
                     }
                     "history" -> {
                         Text("历史对话", color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, modifier = Modifier.padding(top = 32.dp))
