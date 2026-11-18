@@ -18,3 +18,7 @@
 ## 真机结果（2026-11-18）
 
 用户提供华为 nova 14 截图，显示 HiFairy 验证版已成功启动，页面渲染正常，按钮文字为“麦克风权限已授予”。这确认了当前 APK 的安装、启动、Compose 页面显示和 Android 麦克风权限授予流程。尚未验证实际录音数据、语音播放、性能或后台行为。
+
+## Android 模拟器结果（2026-11-18）
+
+使用本机 `Medium_Phone_API_37.0` 模拟器无窗口启动，通过 ADB 安装现有 debug APK，安装返回 `Success`，Activity 成功启动且进程持续运行。截图检查页面布局正常。点击麦克风按钮后出现系统授权弹窗，选择允许后 `dumpsys package` 显示 `RECORD_AUDIO: granted=true`。该结果只验证标准 Android 环境，不代表卓易通的音频与性能表现。
