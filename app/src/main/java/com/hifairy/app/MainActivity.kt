@@ -3,15 +3,12 @@ package com.hifairy.app
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.media.MediaPlayer
-import android.media.MediaRecorder
 import android.widget.VideoView
 import android.widget.TextView
 import android.graphics.BitmapFactory
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.os.Build
 import android.content.pm.ActivityInfo
 import java.io.File
 import java.time.LocalTime
@@ -191,6 +188,12 @@ private fun ActionGlyph(kind: String, color: Color, modifier: Modifier = Modifie
                 line(9f, 14f, 4f, 16f)
             }
             "cancel" -> { line(5f, 5f, 15f, 15f); line(15f, 5f, 5f, 15f) }
+            "mic" -> {
+                drawRoundRect(color, Offset(7f * unit, 2f * unit), Size(6f * unit, 11f * unit), CornerRadius(3f * unit))
+                drawArc(color, 0f, 180f, false, topLeft = Offset(4f * unit, 5f * unit), size = Size(12f * unit, 11f * unit), style = Stroke(stroke, cap = StrokeCap.Round))
+                line(10f, 16f, 10f, 19f); line(7f, 19f, 13f, 19f)
+            }
+            "stop" -> drawRoundRect(color, Offset(5f * unit, 5f * unit), Size(10f * unit, 10f * unit), CornerRadius(2f * unit))
         }
     }
 }
@@ -277,11 +280,10 @@ private fun HistorySessionSurface(selected: Boolean, content: @Composable Column
 
 class MainActivity : ComponentActivity() {
     private var microphoneGranted by mutableStateOf(false)
-    private var recording by mutableStateOf(false)
-    private var hasRecording by mutableStateOf(false)
-    private var status by mutableStateOf("准备录音")
-    private var recorder: MediaRecorder? = null
-    private var player: MediaPlayer? = null
+    private var status by mutableStateOf("")
+    private var voiceListening by mutableStateOf(false)
+    private lateinit var voiceInput: VoiceInput
+    private var draftBeforeVoice = ""
     private var page by mutableStateOf("chat")
     private var settingsFromHistory = false
     private var chatOpenedFromHistory = false
@@ -317,9 +319,9 @@ class MainActivity : ComponentActivity() {
             secureSettings.avatar = "custom"
         } catch (_: Exception) { status = "头像读取失败" }
     }
-    private val recordingFile by lazy { File(cacheDir, "voice-check.m4a") }
     private val requestMicrophone = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         microphoneGranted = it
+        if (it) startVoiceInput() else status = "需要麦克风权限才能语音输入"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -331,6 +333,9 @@ class MainActivity : ComponentActivity() {
         effortDraft = secureSettings.effort
         displayNameDraft = secureSettings.displayName
         avatarChoice = secureSettings.avatar
+        voiceInput = VoiceInput(this, { state -> status = state; voiceListening = voiceInput.listening }, { spoken ->
+            draft = draftBeforeVoice + spoken
+        })
         microphoneGranted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         setContent {
             val context = LocalContext.current
@@ -491,9 +496,11 @@ class MainActivity : ComponentActivity() {
                         Row(Modifier.fillMaxWidth().background(if (editingMessageIndex >= 0) Color(0xFF1C2549) else ThemeTokens.surface, RoundedCornerShape(18.dp)).border(if (editingMessageIndex >= 0) 1.dp else 0.dp, ThemeTokens.accent, RoundedCornerShape(18.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             if (editingMessageIndex >= 0) ActionGlyph("edit", ThemeTokens.accent, Modifier.padding(start = 8.dp))
                             TextField(value = draft, onValueChange = { draft = it }, placeholder = { Text("向 Fairy 提问…", color = ThemeTokens.secondary) }, modifier = Modifier.weight(1f), colors = TextFieldDefaults.colors(focusedTextColor = ThemeTokens.text, unfocusedTextColor = ThemeTokens.text, cursorColor = ThemeTokens.accent, focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
+                            MessageAction(if (voiceListening) "stop" else "mic", if (voiceListening) "停止语音输入" else "开始语音输入", { if (voiceListening) voiceInput.stop() else if (microphoneGranted) startVoiceInput() else requestMicrophone.launch(Manifest.permission.RECORD_AUDIO) }, ThemeTokens.accent)
                             if (editingMessageIndex >= 0) MessageAction("cancel", "取消编辑", { editingMessageIndex = -1; draft = "" }, ThemeTokens.text)
-                            Text(if (sending) "■" else "➤", color = ThemeTokens.accent, fontSize = 25.sp, modifier = Modifier.clickable { if (sending) stopGeneration() else sendMessage() })
+                            Text(if (sending) "■" else "➤", color = ThemeTokens.accent, fontSize = 25.sp, modifier = Modifier.clickable { if (sending) stopGeneration() else if (!voiceListening) sendMessage() })
                         }
+                        if (status.isNotBlank()) Text(status, color = ThemeTokens.secondary, fontSize = 11.sp, modifier = Modifier.padding(start = 8.dp, top = 4.dp))
                     }
                     else -> {
                         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = 28.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
@@ -547,14 +554,6 @@ class MainActivity : ComponentActivity() {
                                 Text("思考强度", color = ThemeTokens.secondary, fontSize = 12.sp)
                                 val effortOptions = selectedModel?.let { listOf("none") + it.effortLevels } ?: listOf(effortDraft)
                                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { effortOptions.forEach { option -> Text(option, color = if (effortDraft == option) ThemeTokens.background else ThemeTokens.secondary, fontSize = 12.sp, modifier = Modifier.background(if (effortDraft == option) ThemeTokens.accent else ThemeTokens.background, RoundedCornerShape(10.dp)).clickable(enabled = selectedModel != null) { effortDraft = option; secureSettings.effort = option }.padding(horizontal = 10.dp, vertical = 9.dp)) } }
-                            }
-                            SettingsCard("VOICE // DEVICE", "语音设备测试") {
-                                Text(status, color = ThemeTokens.secondary, fontSize = 13.sp)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(onClick = { requestMicrophone.launch(Manifest.permission.RECORD_AUDIO) }) { Text(if (microphoneGranted) "已授权" else "授权麦克风") }
-                                    Button(enabled = microphoneGranted, onClick = { if (recording) stopRecording() else startRecording() }) { Text(if (recording) "停止" else "录音") }
-                                }
-                                Button(enabled = hasRecording && !recording, onClick = { playRecording() }) { Text("播放测试录音") }
                             }
                         }
                     }
@@ -743,62 +742,14 @@ class MainActivity : ComponentActivity() {
         chatStore.save(sessions)
     }
 
-    private fun startRecording() {
-        try {
-            player?.release()
-            player = null
-            recorder = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this) else @Suppress("DEPRECATION") MediaRecorder()
-            recorder?.apply {
-                setAudioSource(MediaRecorder.AudioSource.MIC)
-                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                setOutputFile(recordingFile.absolutePath)
-                prepare()
-                start()
-            }
-            recording = true
-            hasRecording = false
-            status = "正在录音…"
-        } catch (e: Exception) {
-            recorder?.release()
-            recorder = null
-            status = "录音失败：${e.javaClass.simpleName}"
-        }
-    }
-
-    private fun stopRecording() {
-        try {
-            recorder?.stop()
-            hasRecording = recordingFile.length() > 0
-            status = if (hasRecording) "录音完成，可播放" else "录音文件为空"
-        } catch (e: Exception) {
-            status = "停止录音失败：${e.javaClass.simpleName}"
-        } finally {
-            recorder?.release()
-            recorder = null
-            recording = false
-        }
-    }
-
-    private fun playRecording() {
-        try {
-            player?.release()
-            player = MediaPlayer().apply {
-                setDataSource(recordingFile.absolutePath)
-                setOnCompletionListener { status = "播放完成" }
-                prepare()
-                start()
-            }
-            status = "正在播放…"
-        } catch (e: Exception) {
-            status = "播放失败：${e.javaClass.simpleName}"
-        }
+    private fun startVoiceInput() {
+        draftBeforeVoice = draft + if (draft.isNotBlank() && !draft.endsWith(' ')) " " else ""
+        voiceInput.start()
     }
 
     override fun onDestroy() {
         activeClient?.cancel()
-        recorder?.release()
-        player?.release()
+        voiceInput.close()
         super.onDestroy()
     }
 }
