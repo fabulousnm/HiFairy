@@ -336,12 +336,13 @@ class MainActivity : ComponentActivity() {
             var draggingDrawer by remember { mutableStateOf(false) }
             var settleVersion by remember { mutableIntStateOf(0) }
             val closeDrawer = { historyOpen = false; chatOpenedFromHistory = false; settleVersion++ }
-            BackHandler(page == "settings" || historyOpen || draggingDrawer || drawerProgress.value > 0.01f || editingMessageIndex >= 0 || chatOpenedFromHistory) {
+            BackHandler(page == "settings" || historyOpen || draggingDrawer || drawerProgress.value > 0.01f || editingMessageIndex >= 0 || chatOpenedFromHistory || (page == "chat" && introPhase != "boot" && introPhase != "transition")) {
                 when {
                     page == "settings" -> leaveSettings()
                     historyOpen || draggingDrawer || drawerProgress.value > 0.01f -> closeDrawer()
                     editingMessageIndex >= 0 -> { editingMessageIndex = -1; draft = "" }
                     chatOpenedFromHistory -> { chatOpenedFromHistory = false; historyOpen = true }
+                    page == "chat" -> moveTaskToBack(true)
                 }
             }
             LaunchedEffect(historyOpen, settleVersion) {
