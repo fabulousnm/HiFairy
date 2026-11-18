@@ -14,7 +14,9 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+        ndk { abiFilters += listOf("arm64-v8a") }
     }
+    sourceSets.getByName("main").assets.srcDir("../voice-lab/src/main/assets/models/paraformer")
     buildFeatures { compose = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
@@ -32,4 +34,5 @@ dependencies {
     implementation("io.noties.markwon:ext-tables:4.6.2")
     implementation("io.noties.markwon:ext-strikethrough:4.6.2")
     implementation("io.noties.markwon:ext-tasklist:4.6.2")
+    implementation(files("../voice-lab/vendor/sherpa-static.aar"))
 }

@@ -3,15 +3,12 @@ package com.hifairy.app
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.media.MediaPlayer
-import android.media.MediaRecorder
 import android.widget.VideoView
 import android.widget.TextView
 import android.graphics.BitmapFactory
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.os.Build
 import android.content.pm.ActivityInfo
 import java.io.File
 import java.time.LocalTime
@@ -26,6 +23,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.Image
@@ -37,6 +35,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.animation.core.*
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Button
 import androidx.compose.material3.TextField
@@ -63,6 +62,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -98,6 +98,8 @@ private object ThemeTokens {
     val pressedCardRim = Color(0xFF344363)
     val pressedInset = Color(0xCC030715)
     val drawerVeil = Color(0xFFC8D5FF)
+    val voiceGlow = Color(0xFF4278DA)
+    val voiceCancelGlow = Color(0xFFD96878)
 }
 
 private object DrawerMotion {
@@ -191,6 +193,16 @@ private fun ActionGlyph(kind: String, color: Color, modifier: Modifier = Modifie
                 line(9f, 14f, 4f, 16f)
             }
             "cancel" -> { line(5f, 5f, 15f, 15f); line(15f, 5f, 5f, 15f) }
+            "mic" -> {
+                drawRoundRect(color, Offset(7f * unit, 2f * unit), Size(6f * unit, 11f * unit), CornerRadius(3f * unit))
+                drawArc(color, 0f, 180f, false, topLeft = Offset(4f * unit, 5f * unit), size = Size(12f * unit, 11f * unit), style = Stroke(stroke, cap = StrokeCap.Round))
+                line(10f, 16f, 10f, 19f); line(7f, 19f, 13f, 19f)
+            }
+            "keyboard" -> {
+                drawRoundRect(color, Offset(2f * unit, 4f * unit), Size(16f * unit, 12f * unit), CornerRadius(2f * unit), style = Stroke(stroke))
+                for (x in listOf(5f, 9f, 13f)) for (y in listOf(8f, 11f)) drawCircle(color, unit, Offset(x * unit, y * unit))
+                line(6f, 14f, 14f, 14f)
+            }
         }
     }
 }
@@ -277,11 +289,13 @@ private fun HistorySessionSurface(selected: Boolean, content: @Composable Column
 
 class MainActivity : ComponentActivity() {
     private var microphoneGranted by mutableStateOf(false)
-    private var recording by mutableStateOf(false)
-    private var hasRecording by mutableStateOf(false)
-    private var status by mutableStateOf("准备录音")
-    private var recorder: MediaRecorder? = null
-    private var player: MediaPlayer? = null
+    private var status by mutableStateOf("")
+    private var voiceMode by mutableStateOf(false)
+    private var voiceHolding by mutableStateOf(false)
+    private var voiceCancel by mutableStateOf(false)
+    private var voiceLevel by mutableFloatStateOf(0f)
+    private var voiceStatus by mutableStateOf("")
+    private lateinit var voiceInput: ParaformerVoiceInput
     private var page by mutableStateOf("chat")
     private var settingsFromHistory = false
     private var chatOpenedFromHistory = false
@@ -317,9 +331,9 @@ class MainActivity : ComponentActivity() {
             secureSettings.avatar = "custom"
         } catch (_: Exception) { status = "头像读取失败" }
     }
-    private val recordingFile by lazy { File(cacheDir, "voice-check.m4a") }
     private val requestMicrophone = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         microphoneGranted = it
+        if (it && voiceMode) voiceInput.prepare() else if (!it) voiceStatus = "需要麦克风权限才能使用语音输入"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -331,6 +345,13 @@ class MainActivity : ComponentActivity() {
         effortDraft = secureSettings.effort
         displayNameDraft = secureSettings.displayName
         avatarChoice = secureSettings.avatar
+        voiceInput = ParaformerVoiceInput(this, { voiceStatus = it }, { voiceLevel = it }, { transcript ->
+            val previousDraft = draft
+            if (sending) stopGeneration()
+            draft = transcript
+            sendMessage()
+            if (draft.isEmpty()) draft = previousDraft
+        })
         microphoneGranted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         setContent {
             val context = LocalContext.current
@@ -367,10 +388,12 @@ class MainActivity : ComponentActivity() {
             val closeDrawer = { historyOpen = false; chatOpenedFromHistory = false; settleVersion++ }
             BackHandler(page == "settings" || historyOpen || draggingDrawer || drawerProgress.value > 0.01f || editingMessageIndex >= 0 || chatOpenedFromHistory || (page == "chat" && introPhase != "boot" && introPhase != "transition")) {
                 when {
+                    voiceHolding -> { voiceInput.finish(true); voiceHolding = false; voiceCancel = false }
                     page == "settings" -> leaveSettings()
                     historyOpen || draggingDrawer || drawerProgress.value > 0.01f -> closeDrawer()
                     editingMessageIndex >= 0 -> { editingMessageIndex = -1; draft = "" }
                     chatOpenedFromHistory -> { chatOpenedFromHistory = false; historyOpen = true }
+                    voiceMode -> { voiceMode = false; voiceStatus = "" }
                     page == "chat" -> moveTaskToBack(true)
                 }
             }
@@ -488,11 +511,49 @@ class MainActivity : ComponentActivity() {
                                 Text(greetingForHour(greetingHour), color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, letterSpacing = TypeTokens.labelTracking, modifier = Modifier.align(Alignment.Center).offset(y = eyeSize / 2 + 42.dp))
                             }
                         }
-                        Row(Modifier.fillMaxWidth().background(if (editingMessageIndex >= 0) Color(0xFF1C2549) else ThemeTokens.surface, RoundedCornerShape(18.dp)).border(if (editingMessageIndex >= 0) 1.dp else 0.dp, ThemeTokens.accent, RoundedCornerShape(18.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            if (editingMessageIndex >= 0) ActionGlyph("edit", ThemeTokens.accent, Modifier.padding(start = 8.dp))
-                            TextField(value = draft, onValueChange = { draft = it }, placeholder = { Text("向 Fairy 提问…", color = ThemeTokens.secondary) }, modifier = Modifier.weight(1f), colors = TextFieldDefaults.colors(focusedTextColor = ThemeTokens.text, unfocusedTextColor = ThemeTokens.text, cursorColor = ThemeTokens.accent, focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
-                            if (editingMessageIndex >= 0) MessageAction("cancel", "取消编辑", { editingMessageIndex = -1; draft = "" }, ThemeTokens.text)
-                            Text(if (sending) "■" else "➤", color = ThemeTokens.accent, fontSize = 25.sp, modifier = Modifier.clickable { if (sending) stopGeneration() else sendMessage() })
+                        if (voiceMode && editingMessageIndex < 0) {
+                            var dragY by remember { mutableFloatStateOf(0f) }
+                            Row(Modifier.fillMaxWidth().background(ThemeTokens.surface, RoundedCornerShape(18.dp)).border(1.dp, ThemeTokens.pressedCardRim, RoundedCornerShape(18.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                MessageAction("keyboard", "切换文字输入", { if (voiceHolding) { voiceInput.finish(true); voiceHolding = false }; voiceMode = false; voiceStatus = "" }, ThemeTokens.accent)
+                                Box(Modifier.weight(1f).height(48.dp).background(ThemeTokens.raisedCard, RoundedCornerShape(13.dp))
+                                    .pointerInput(microphoneGranted, voiceInput.ready) {
+                                        detectDragGesturesAfterLongPress(
+                                            onDragStart = {
+                                                dragY = 0f
+                                                voiceCancel = false
+                                                if (!microphoneGranted) requestMicrophone.launch(Manifest.permission.RECORD_AUDIO)
+                                                else if (voiceInput.start()) voiceHolding = true
+                                                else { voiceStatus = "语音模型尚未就绪"; voiceInput.prepare() }
+                                            },
+                                            onDrag = { change, amount ->
+                                                dragY += amount.y
+                                                voiceCancel = dragY < -72.dp.toPx()
+                                                change.consume()
+                                            },
+                                            onDragEnd = {
+                                                if (voiceHolding) voiceInput.finish(voiceCancel)
+                                                voiceHolding = false
+                                                voiceCancel = false
+                                            },
+                                            onDragCancel = {
+                                                if (voiceHolding) voiceInput.finish(true)
+                                                voiceHolding = false
+                                                voiceCancel = false
+                                            }
+                                        )
+                                    }.semantics { contentDescription = "长按说话，上滑取消" }, contentAlignment = Alignment.Center) {
+                                    Text(if (voiceInput.ready) "按住说话" else "正在准备语音…", color = ThemeTokens.text, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                                }
+                            }
+                            if (voiceStatus.isNotBlank() && voiceStatus != "按住说话") Text(voiceStatus, color = ThemeTokens.secondary, fontSize = 11.sp, modifier = Modifier.padding(start = 8.dp, top = 4.dp))
+                        } else {
+                            Row(Modifier.fillMaxWidth().background(if (editingMessageIndex >= 0) Color(0xFF1C2549) else ThemeTokens.surface, RoundedCornerShape(18.dp)).border(if (editingMessageIndex >= 0) 1.dp else 0.dp, ThemeTokens.accent, RoundedCornerShape(18.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                if (editingMessageIndex >= 0) ActionGlyph("edit", ThemeTokens.accent, Modifier.padding(start = 8.dp))
+                                if (editingMessageIndex < 0) MessageAction("mic", "切换语音输入", { voiceMode = true; if (microphoneGranted) voiceInput.prepare() else requestMicrophone.launch(Manifest.permission.RECORD_AUDIO) }, ThemeTokens.accent)
+                                TextField(value = draft, onValueChange = { draft = it }, placeholder = { Text("向 Fairy 提问…", color = ThemeTokens.secondary) }, modifier = Modifier.weight(1f), colors = TextFieldDefaults.colors(focusedTextColor = ThemeTokens.text, unfocusedTextColor = ThemeTokens.text, cursorColor = ThemeTokens.accent, focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
+                                if (editingMessageIndex >= 0) MessageAction("cancel", "取消编辑", { editingMessageIndex = -1; draft = "" }, ThemeTokens.text)
+                                Text(if (sending) "■" else "➤", color = ThemeTokens.accent, fontSize = 25.sp, modifier = Modifier.clickable { if (sending) stopGeneration() else sendMessage() })
+                            }
                         }
                     }
                     else -> {
@@ -548,14 +609,6 @@ class MainActivity : ComponentActivity() {
                                 val effortOptions = selectedModel?.let { listOf("none") + it.effortLevels } ?: listOf(effortDraft)
                                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { effortOptions.forEach { option -> Text(option, color = if (effortDraft == option) ThemeTokens.background else ThemeTokens.secondary, fontSize = 12.sp, modifier = Modifier.background(if (effortDraft == option) ThemeTokens.accent else ThemeTokens.background, RoundedCornerShape(10.dp)).clickable(enabled = selectedModel != null) { effortDraft = option; secureSettings.effort = option }.padding(horizontal = 10.dp, vertical = 9.dp)) } }
                             }
-                            SettingsCard("VOICE // DEVICE", "语音设备测试") {
-                                Text(status, color = ThemeTokens.secondary, fontSize = 13.sp)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(onClick = { requestMicrophone.launch(Manifest.permission.RECORD_AUDIO) }) { Text(if (microphoneGranted) "已授权" else "授权麦克风") }
-                                    Button(enabled = microphoneGranted, onClick = { if (recording) stopRecording() else startRecording() }) { Text(if (recording) "停止" else "录音") }
-                                }
-                                Button(enabled = hasRecording && !recording, onClick = { playRecording() }) { Text("播放测试录音") }
-                            }
                         }
                     }
                 }
@@ -594,6 +647,28 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         Text("设置  ›", color = ThemeTokens.text, modifier = Modifier.fillMaxWidth().clickable { settingsFromHistory = true; historyOpen = false; page = "settings" }.padding(vertical = 16.dp))
+                    }
+                }
+            }
+            if (voiceHolding && page == "chat" && progress < 0.01f) {
+                val glow by animateColorAsState(if (voiceCancel) ThemeTokens.voiceCancelGlow else ThemeTokens.voiceGlow, tween(180), label = "voice glow")
+                val level by animateFloatAsState(voiceLevel, tween(100), label = "voice level")
+                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(330.dp)
+                    .background(Brush.verticalGradient(listOf(Color.Transparent, glow.copy(alpha = 0.18f), glow.copy(alpha = 0.82f))))) {
+                    Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(bottom = 88.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(if (voiceCancel) "松手取消" else "松手发送 · 上滑取消", color = if (voiceCancel) Color(0xFFFFD4D8) else ThemeTokens.text,
+                            fontSize = 16.sp, fontFamily = TypeTokens.interfaceFont)
+                        Spacer(Modifier.height(56.dp))
+                        Canvas(Modifier.fillMaxWidth(0.72f).height(32.dp)) {
+                            val count = 42
+                            val gap = size.width / (count - 1)
+                            for (index in 0 until count) {
+                                val profile = 0.35f + 0.65f * kotlin.math.sin(index * 0.57f).let { kotlin.math.abs(it) }
+                                val height = size.height * (0.15f + level * 0.75f * profile)
+                                val x = index * gap
+                                drawLine(if (voiceCancel) Color(0xFFFF8995) else ThemeTokens.text.copy(alpha = 0.9f), Offset(x, (size.height - height) / 2), Offset(x, (size.height + height) / 2), 2.dp.toPx(), cap = StrokeCap.Round)
+                            }
+                        }
                     }
                 }
             }
@@ -743,62 +818,9 @@ class MainActivity : ComponentActivity() {
         chatStore.save(sessions)
     }
 
-    private fun startRecording() {
-        try {
-            player?.release()
-            player = null
-            recorder = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(this) else @Suppress("DEPRECATION") MediaRecorder()
-            recorder?.apply {
-                setAudioSource(MediaRecorder.AudioSource.MIC)
-                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                setOutputFile(recordingFile.absolutePath)
-                prepare()
-                start()
-            }
-            recording = true
-            hasRecording = false
-            status = "正在录音…"
-        } catch (e: Exception) {
-            recorder?.release()
-            recorder = null
-            status = "录音失败：${e.javaClass.simpleName}"
-        }
-    }
-
-    private fun stopRecording() {
-        try {
-            recorder?.stop()
-            hasRecording = recordingFile.length() > 0
-            status = if (hasRecording) "录音完成，可播放" else "录音文件为空"
-        } catch (e: Exception) {
-            status = "停止录音失败：${e.javaClass.simpleName}"
-        } finally {
-            recorder?.release()
-            recorder = null
-            recording = false
-        }
-    }
-
-    private fun playRecording() {
-        try {
-            player?.release()
-            player = MediaPlayer().apply {
-                setDataSource(recordingFile.absolutePath)
-                setOnCompletionListener { status = "播放完成" }
-                prepare()
-                start()
-            }
-            status = "正在播放…"
-        } catch (e: Exception) {
-            status = "播放失败：${e.javaClass.simpleName}"
-        }
-    }
-
     override fun onDestroy() {
         activeClient?.cancel()
-        recorder?.release()
-        player?.release()
+        voiceInput.close()
         super.onDestroy()
     }
 }
