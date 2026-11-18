@@ -35,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.draw.scale
@@ -113,8 +114,11 @@ private fun ChatAvatar(role: String, avatar: String, modifier: Modifier = Modifi
     val custom = remember(avatar) {
         if (role == "user" && avatar == "custom") BitmapFactory.decodeFile(File(context.filesDir, "custom-avatar.jpg").absolutePath)?.asImageBitmap() else null
     }
-    if (custom != null) Image(custom, contentDescription = "我的头像", modifier = modifier.clip(CircleShape))
-    else Image(painterResource(resource), contentDescription = if (role == "assistant") "Fairy 眼徽" else "我的头像", modifier = modifier.clip(CircleShape))
+    Box(modifier.aspectRatio(1f).clip(CircleShape), contentAlignment = Alignment.Center) {
+        val imageModifier = Modifier.fillMaxSize().scale(if (role == "user" && custom == null) 1.14f else 1f)
+        if (custom != null) Image(custom, contentDescription = "我的头像", modifier = imageModifier, contentScale = ContentScale.Crop)
+        else Image(painterResource(resource), contentDescription = if (role == "assistant") "Fairy 眼徽" else "我的头像", modifier = imageModifier, contentScale = ContentScale.Crop)
+    }
 }
 
 @Composable
