@@ -48,4 +48,12 @@ class SecureSettings(context: Context) {
     var effort: String
         get() = prefs.getString("effort", "high") ?: "high"
         set(value) { prefs.edit().putString("effort", value).apply() }
+
+    var displayName: String
+        get() = prefs.getString("display_name", "绳匠") ?: "绳匠"
+        set(value) { prefs.edit().putString("display_name", value).apply() }
+
+    var avatar: String
+        get() = prefs.getString("avatar", "ling") ?: "ling"
+        set(value) { prefs.edit().putString("avatar", value).apply() }
 }

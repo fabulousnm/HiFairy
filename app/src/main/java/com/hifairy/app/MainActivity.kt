@@ -7,6 +7,7 @@ import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.widget.VideoView
 import android.widget.TextView
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.content.pm.ActivityInfo
 import java.io.File
@@ -20,6 +21,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Button
@@ -31,6 +34,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.draw.scale
@@ -41,8 +45,13 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.noties.markwon.Markwon
+import io.noties.markwon.AbstractMarkwonPlugin
+import io.noties.markwon.core.MarkwonTheme
 import io.noties.markwon.ext.latex.JLatexMathPlugin
 import io.noties.markwon.inlineparser.MarkwonInlineParserPlugin
+import io.noties.markwon.ext.tables.TablePlugin
+import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
+import io.noties.markwon.ext.tasklist.TaskListPlugin
 import kotlinx.coroutines.launch
 
 private object ThemeTokens {
@@ -51,7 +60,12 @@ private object ThemeTokens {
     val accent = Color(0xFF8FB4FF)
     val secondary = Color(0xFF9AA4D6)
     val text = Color(0xFFE8F3FF)
+    val fairyBubble = Color(0xFF161A2A)
+    val userBubble = Color(0xFF293765)
+    val codeBackground = 0xFF080914.toInt()
 }
+
+private data class ChatMessage(val role: String, val content: String)
 
 private object TypeTokens {
     val interfaceFont = FontFamily.SansSerif
@@ -72,7 +86,17 @@ private fun MarkdownMessage(message: String, modifier: Modifier = Modifier) {
     val markwon = remember(context) {
         Markwon.builder(context)
             .usePlugin(MarkwonInlineParserPlugin.create())
-            .usePlugin(JLatexMathPlugin.create(44f))
+            .usePlugin(JLatexMathPlugin.create(44f) { it.inlinesEnabled(true) })
+            .usePlugin(TablePlugin.create(context))
+            .usePlugin(StrikethroughPlugin.create())
+            .usePlugin(TaskListPlugin.create(context))
+            .usePlugin(object : AbstractMarkwonPlugin() {
+                override fun configureTheme(builder: MarkwonTheme.Builder) {
+                    builder.codeBlockBackgroundColor(ThemeTokens.codeBackground)
+                        .codeBlockTextColor(android.graphics.Color.rgb(232, 243, 255))
+                        .codeBackgroundColor(ThemeTokens.codeBackground)
+                }
+            })
             .build()
     }
     AndroidView(
@@ -80,6 +104,32 @@ private fun MarkdownMessage(message: String, modifier: Modifier = Modifier) {
         update = { markwon.setMarkdown(it, normalizeMath(message)) },
         modifier = modifier
     )
+}
+
+@Composable
+private fun ChatAvatar(role: String, avatar: String, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val resource = if (role == "assistant") R.drawable.fairy_eye else if (avatar == "zhe") R.drawable.avatar_zhe else R.drawable.avatar_ling
+    val custom = remember(avatar) {
+        if (role == "user" && avatar == "custom") BitmapFactory.decodeFile(File(context.filesDir, "custom-avatar.jpg").absolutePath)?.asImageBitmap() else null
+    }
+    if (custom != null) Image(custom, contentDescription = "我的头像", modifier = modifier.clip(CircleShape))
+    else Image(painterResource(resource), contentDescription = if (role == "assistant") "Fairy 眼徽" else "我的头像", modifier = modifier.clip(CircleShape))
+}
+
+@Composable
+private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String) {
+    val isUser = message.role == "user"
+    Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Top) {
+        if (!isUser) ChatAvatar("assistant", avatar, Modifier.size(36.dp))
+        Column(Modifier.widthIn(max = 300.dp).padding(horizontal = 8.dp), horizontalAlignment = if (isUser) Alignment.End else Alignment.Start) {
+            Text(if (isUser) displayName else "Fairy", color = ThemeTokens.secondary, fontSize = 11.sp, fontFamily = TypeTokens.terminalFont, modifier = Modifier.padding(bottom = 5.dp))
+            Box(Modifier.background(if (isUser) ThemeTokens.userBubble else ThemeTokens.fairyBubble, RoundedCornerShape(16.dp)).padding(horizontal = 14.dp, vertical = 11.dp)) {
+                MarkdownMessage(message.content, Modifier.fillMaxWidth())
+            }
+        }
+        if (isUser) ChatAvatar("user", avatar, Modifier.size(36.dp))
+    }
 }
 
 @Composable
@@ -109,13 +159,22 @@ class MainActivity : ComponentActivity() {
     private var page by mutableStateOf("chat")
     private var introPhase by mutableStateOf("boot")
     private var draft by mutableStateOf("")
-    private val messages = mutableStateListOf<String>()
+    private val messages = mutableStateListOf<ChatMessage>()
     private val conversation = mutableListOf<Pair<String, String>>()
     private var sending by mutableStateOf(false)
     private lateinit var secureSettings: SecureSettings
     private var keyDraft by mutableStateOf("")
     private var modelDraft by mutableStateOf("deepseek-flash")
     private var effortDraft by mutableStateOf("high")
+    private var displayNameDraft by mutableStateOf("绳匠")
+    private var avatarChoice by mutableStateOf("ling")
+    private val pickAvatar = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) try {
+            contentResolver.openInputStream(uri)?.use { source -> File(filesDir, "custom-avatar.jpg").outputStream().use { source.copyTo(it) } }
+            avatarChoice = "custom"
+            secureSettings.avatar = "custom"
+        } catch (_: Exception) { status = "头像读取失败" }
+    }
     private val recordingFile by lazy { File(cacheDir, "voice-check.m4a") }
     private val requestMicrophone = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         microphoneGranted = it
@@ -126,6 +185,8 @@ class MainActivity : ComponentActivity() {
         secureSettings = SecureSettings(this)
         modelDraft = secureSettings.model
         effortDraft = secureSettings.effort
+        displayNameDraft = secureSettings.displayName
+        avatarChoice = secureSettings.avatar
         microphoneGranted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         setContent {
             val context = LocalContext.current
@@ -186,11 +247,11 @@ class MainActivity : ComponentActivity() {
                                 Text("FAIRY // ONLINE", color = ThemeTokens.accent, fontSize = 10.sp, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.eyebrowTracking, modifier = Modifier.offset(70.dp, 46.dp))
                                 val scrollState = rememberScrollState()
                                 LaunchedEffect(messages.size) { scrollState.animateScrollTo(scrollState.maxValue) }
-                                Column(Modifier.fillMaxSize().verticalScroll(scrollState).padding(top = 110.dp, bottom = 16.dp)) {
-                                    messages.forEach { message -> MarkdownMessage(message, Modifier.fillMaxWidth().padding(vertical = 8.dp)) }
+                                Column(Modifier.fillMaxSize().padding(top = 94.dp).verticalScroll(scrollState).padding(bottom = 16.dp)) {
+                                    messages.forEach { message -> ChatBubble(message, displayNameDraft, avatarChoice) }
                                 }
                             } else {
-                                Text("晚上好，绳匠。", color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, letterSpacing = TypeTokens.labelTracking, modifier = Modifier.align(Alignment.Center).offset(y = 120.dp))
+                                Text("晚上好，$displayNameDraft。", color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, letterSpacing = TypeTokens.labelTracking, modifier = Modifier.align(Alignment.Center).offset(y = 120.dp))
                             }
                         }
                         Row(Modifier.fillMaxWidth().background(ThemeTokens.surface, RoundedCornerShape(18.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -206,6 +267,21 @@ class MainActivity : ComponentActivity() {
                     }
                     else -> {
                         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = 28.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                            SettingsCard("PROFILE // IDENTITY", "我的资料") {
+                                Text("昵称", color = ThemeTokens.secondary, fontSize = 12.sp)
+                                TextField(value = displayNameDraft, onValueChange = { displayNameDraft = it.take(20); secureSettings.displayName = displayNameDraft.ifBlank { "绳匠" } }, modifier = Modifier.fillMaxWidth(), colors = darkFieldColors())
+                                Text("头像", color = ThemeTokens.secondary, fontSize = 12.sp)
+                                Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    listOf("ling" to "铃", "zhe" to "哲").forEach { (choice, label) ->
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { avatarChoice = choice; secureSettings.avatar = choice }) {
+                                            ChatAvatar("user", choice, Modifier.size(52.dp).border(if (avatarChoice == choice) 2.dp else 0.dp, ThemeTokens.accent, CircleShape))
+                                            Text(label, color = ThemeTokens.text, fontSize = 12.sp)
+                                        }
+                                    }
+                                    Text("自选图片", color = ThemeTokens.accent, fontSize = 13.sp, modifier = Modifier.clickable { pickAvatar.launch("image/*") }.padding(10.dp))
+                                }
+                                if (avatarChoice == "custom") ChatAvatar("user", "custom", Modifier.size(52.dp))
+                            }
                             SettingsCard("DEEPSEEK // CONNECTION", "连接配置") {
                                 Text("API KEY", color = ThemeTokens.secondary, fontSize = 11.sp, fontFamily = TypeTokens.terminalFont)
                                 TextField(value = keyDraft, onValueChange = { keyDraft = it }, visualTransformation = PasswordVisualTransformation(), placeholder = { Text(if (secureSettings.apiKey().isEmpty()) "输入 API Key" else "已保存 · 输入新 Key 可替换", color = ThemeTokens.secondary) }, modifier = Modifier.fillMaxWidth(), colors = darkFieldColors())
@@ -242,10 +318,10 @@ class MainActivity : ComponentActivity() {
         val apiKey = secureSettings.apiKey()
         if (apiKey.isEmpty()) { page = "settings"; status = "请先配置 DeepSeek API Key"; return }
         draft = ""
-        messages.add("你：$input")
+        messages.add(ChatMessage("user", input))
         conversation.add("user" to input)
         val responseIndex = messages.size
-        messages.add("Fairy：")
+        messages.add(ChatMessage("assistant", "正在思考…"))
         sending = true
         val context = conversation.toList()
         Thread {
@@ -253,11 +329,11 @@ class MainActivity : ComponentActivity() {
             try {
                 DeepSeekClient().stream(apiKey, secureSettings.model, secureSettings.effort, context) { token ->
                     answer.append(token)
-                    runOnUiThread { messages[responseIndex] = "Fairy：$answer" }
+                    runOnUiThread { messages[responseIndex] = ChatMessage("assistant", answer.toString()) }
                 }
                 runOnUiThread { conversation.add("assistant" to answer.toString()); sending = false }
             } catch (e: Exception) {
-                runOnUiThread { messages[responseIndex] = "请求失败：${e.message}"; sending = false }
+                runOnUiThread { messages[responseIndex] = ChatMessage("assistant", "请求失败：${e.message}"); sending = false }
             }
         }.start()
     }
