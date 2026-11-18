@@ -242,10 +242,10 @@ private fun SettingsCard(eyebrow: String, title: String, content: @Composable Co
 @Composable
 private fun HistorySessionSurface(selected: Boolean, content: @Composable ColumnScope.() -> Unit) {
     val shape = RoundedCornerShape(14.dp)
-    val fill = if (selected) Brush.linearGradient(listOf(ThemeTokens.pressedCardTop, ThemeTokens.pressedCardBottom))
-        else Brush.linearGradient(listOf(ThemeTokens.raisedCardTop, ThemeTokens.raisedCardBottom))
-    val rim = if (selected) Brush.linearGradient(listOf(Color(0xFF050817), Color(0xFF536486)))
-        else Brush.linearGradient(listOf(Color(0xFF8393BC), Color(0xFF141A30)))
+    val fill = if (selected) Brush.verticalGradient(listOf(ThemeTokens.pressedCardTop, ThemeTokens.pressedCardBottom))
+        else Brush.verticalGradient(listOf(ThemeTokens.raisedCardTop, ThemeTokens.raisedCardBottom))
+    val rim = if (selected) Brush.verticalGradient(listOf(Color(0xFF050817), Color(0xFF536486)))
+        else Brush.verticalGradient(listOf(Color(0xFF8393BC), Color(0xFF141A30)))
     Column(
         Modifier.fillMaxWidth().padding(bottom = 12.dp)
             .then(if (selected) Modifier else Modifier.shadow(9.dp, shape, ambientColor = Color(0xCC020410), spotColor = Color(0xFF020410)))
@@ -254,7 +254,7 @@ private fun HistorySessionSurface(selected: Boolean, content: @Composable Column
                 if (selected) {
                     val inset = 3.dp.toPx()
                     drawRoundRect(
-                        brush = Brush.linearGradient(listOf(Color(0xE6000410), Color.Transparent, Color(0x887A8EBB))),
+                        brush = Brush.verticalGradient(listOf(Color(0xE6000410), Color.Transparent, Color(0x887A8EBB))),
                         topLeft = Offset(inset, inset),
                         size = Size(size.width - inset * 2, size.height - inset * 2),
                         cornerRadius = CornerRadius(11.dp.toPx()),
