@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.widget.VideoView
+import android.widget.TextView
 import android.os.Build
 import android.content.pm.ActivityInfo
 import java.io.File
@@ -15,6 +16,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.Image
 import androidx.compose.animation.core.*
@@ -37,6 +40,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.noties.markwon.Markwon
+import io.noties.markwon.ext.latex.JLatexMathPlugin
+import io.noties.markwon.inlineparser.MarkwonInlineParserPlugin
 import kotlinx.coroutines.launch
 
 private object ThemeTokens {
@@ -54,6 +60,43 @@ private object TypeTokens {
     val eyebrowTracking = 0.22.sp
     val brandTracking = 0.34.sp
     val labelTracking = 0.06.sp
+}
+
+private fun normalizeMath(markdown: String): String = markdown
+    .replace("\\[", "\n$$\n").replace("\\]", "\n$$\n")
+    .replace("\\(", "$$").replace("\\)", "$$")
+
+@Composable
+private fun MarkdownMessage(message: String, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val markwon = remember(context) {
+        Markwon.builder(context)
+            .usePlugin(MarkwonInlineParserPlugin.create())
+            .usePlugin(JLatexMathPlugin.create(44f))
+            .build()
+    }
+    AndroidView(
+        factory = { TextView(it).apply { setTextColor(android.graphics.Color.rgb(232, 243, 255)); textSize = 16f; setLineSpacing(4f, 1f); setTextIsSelectable(true); setLinkTextColor(android.graphics.Color.rgb(143, 180, 255)) } },
+        update = { markwon.setMarkdown(it, normalizeMath(message)) },
+        modifier = modifier
+    )
+}
+
+@Composable
+private fun darkFieldColors() = TextFieldDefaults.colors(
+    focusedTextColor = ThemeTokens.text, unfocusedTextColor = ThemeTokens.text,
+    cursorColor = ThemeTokens.accent,
+    focusedContainerColor = ThemeTokens.background, unfocusedContainerColor = ThemeTokens.background,
+    focusedIndicatorColor = ThemeTokens.accent, unfocusedIndicatorColor = ThemeTokens.secondary
+)
+
+@Composable
+private fun SettingsCard(eyebrow: String, title: String, content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth().background(ThemeTokens.surface, RoundedCornerShape(20.dp)).border(1.dp, Color(0xFF25335C), RoundedCornerShape(20.dp)).padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(eyebrow, color = ThemeTokens.accent, fontSize = 10.sp, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.eyebrowTracking)
+        Text(title, color = ThemeTokens.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        content()
+    }
 }
 
 class MainActivity : ComponentActivity() {
@@ -119,10 +162,17 @@ class MainActivity : ComponentActivity() {
                 }
             } else {
             Column(Modifier.fillMaxSize().background(ThemeTokens.background).padding(20.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("☰", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { page = "history" })
-                    Text("H.D.D Ⅲ", color = ThemeTokens.text, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.brandTracking)
-                    Text("＋", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { page = "chat"; draft = ""; messages.clear(); conversation.clear() })
+                if (page == "settings") {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("‹", color = ThemeTokens.accent, fontSize = 34.sp, modifier = Modifier.clickable { page = "history" }.padding(end = 24.dp))
+                        Text("设置", color = ThemeTokens.text, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                } else {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("☰", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { page = "history" })
+                        Text("H.D.D Ⅲ", color = ThemeTokens.text, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.brandTracking)
+                        Text("＋", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { page = "chat"; draft = ""; messages.clear(); conversation.clear() })
+                    }
                 }
                 when (page) {
                     "chat" -> {
@@ -134,15 +184,17 @@ class MainActivity : ComponentActivity() {
                             Image(painterResource(R.drawable.fairy_eye), contentDescription = "Fairy 眼徽", modifier = Modifier.offset(eyeX, eyeY).size(eyeSize).scale(eyeScale))
                             if (hasConversation) {
                                 Text("FAIRY // ONLINE", color = ThemeTokens.accent, fontSize = 10.sp, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.eyebrowTracking, modifier = Modifier.offset(70.dp, 46.dp))
-                                Column(Modifier.fillMaxWidth().padding(top = 110.dp)) {
-                                    messages.forEach { message -> Text(message, color = ThemeTokens.text, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) }
+                                val scrollState = rememberScrollState()
+                                LaunchedEffect(messages.size) { scrollState.animateScrollTo(scrollState.maxValue) }
+                                Column(Modifier.fillMaxSize().verticalScroll(scrollState).padding(top = 110.dp, bottom = 16.dp)) {
+                                    messages.forEach { message -> MarkdownMessage(message, Modifier.fillMaxWidth().padding(vertical = 8.dp)) }
                                 }
                             } else {
                                 Text("晚上好，绳匠。", color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, letterSpacing = TypeTokens.labelTracking, modifier = Modifier.align(Alignment.Center).offset(y = 120.dp))
                             }
                         }
                         Row(Modifier.fillMaxWidth().background(ThemeTokens.surface, RoundedCornerShape(18.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            TextField(value = draft, onValueChange = { draft = it }, placeholder = { Text("向 Fairy 提问…") }, modifier = Modifier.weight(1f), colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent))
+                            TextField(value = draft, onValueChange = { draft = it }, placeholder = { Text("向 Fairy 提问…", color = ThemeTokens.secondary) }, modifier = Modifier.weight(1f), colors = TextFieldDefaults.colors(focusedTextColor = ThemeTokens.text, unfocusedTextColor = ThemeTokens.text, cursorColor = ThemeTokens.accent, focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
                             Text("➤", color = ThemeTokens.accent, fontSize = 25.sp, modifier = Modifier.clickable { sendMessage() })
                         }
                     }
@@ -153,19 +205,28 @@ class MainActivity : ComponentActivity() {
                         Text("设置  ›", color = ThemeTokens.text, modifier = Modifier.fillMaxWidth().clickable { page = "settings" }.padding(vertical = 20.dp))
                     }
                     else -> {
-                        Text("设置", color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, modifier = Modifier.padding(top = 32.dp))
-                        Text("DeepSeek API Key", color = ThemeTokens.accent, modifier = Modifier.padding(top = 28.dp))
-                        TextField(value = keyDraft, onValueChange = { keyDraft = it }, visualTransformation = PasswordVisualTransformation(), placeholder = { Text(if (secureSettings.apiKey().isEmpty()) "输入 API Key" else "已保存；输入新 Key 可替换") }, modifier = Modifier.fillMaxWidth())
-                        Button(onClick = { if (keyDraft.isNotBlank()) { secureSettings.saveApiKey(keyDraft.trim()); keyDraft = ""; status = "API Key 已加密保存" } }) { Text("保存 Key") }
-                        Text("模型", color = ThemeTokens.accent)
-                        TextField(value = modelDraft, onValueChange = { modelDraft = it; secureSettings.model = it }, modifier = Modifier.fillMaxWidth())
-                        Text("思考强度", color = ThemeTokens.accent)
-                        Row { listOf("none", "low", "high", "max").forEach { option -> Text(option, color = if (effortDraft == option) ThemeTokens.accent else ThemeTokens.secondary, modifier = Modifier.clickable { effortDraft = option; secureSettings.effort = option }.padding(8.dp)) } }
-                        Text("语音设备测试", color = ThemeTokens.accent, modifier = Modifier.padding(top = 32.dp))
-                        Button(onClick = { requestMicrophone.launch(Manifest.permission.RECORD_AUDIO) }) { Text(if (microphoneGranted) "麦克风已授权" else "授权麦克风") }
-                        Text(status, color = ThemeTokens.secondary)
-                        Button(enabled = microphoneGranted, onClick = { if (recording) stopRecording() else startRecording() }) { Text(if (recording) "停止录音" else "开始录音") }
-                        Button(enabled = hasRecording && !recording, onClick = { playRecording() }) { Text("播放录音") }
+                        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = 28.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                            SettingsCard("DEEPSEEK // CONNECTION", "连接配置") {
+                                Text("API KEY", color = ThemeTokens.secondary, fontSize = 11.sp, fontFamily = TypeTokens.terminalFont)
+                                TextField(value = keyDraft, onValueChange = { keyDraft = it }, visualTransformation = PasswordVisualTransformation(), placeholder = { Text(if (secureSettings.apiKey().isEmpty()) "输入 API Key" else "已保存 · 输入新 Key 可替换", color = ThemeTokens.secondary) }, modifier = Modifier.fillMaxWidth(), colors = darkFieldColors())
+                                Text("密钥仅保存在本机的加密存储中", color = ThemeTokens.secondary, fontSize = 12.sp)
+                                Button(onClick = { if (keyDraft.isNotBlank()) { secureSettings.saveApiKey(keyDraft.trim()); keyDraft = ""; status = "API Key 已加密保存" } }) { Text("保存密钥") }
+                            }
+                            SettingsCard("MODEL // RESPONSE", "回答偏好") {
+                                Text("模型", color = ThemeTokens.secondary, fontSize = 12.sp)
+                                TextField(value = modelDraft, onValueChange = { modelDraft = it; secureSettings.model = it }, modifier = Modifier.fillMaxWidth(), colors = darkFieldColors())
+                                Text("思考强度", color = ThemeTokens.secondary, fontSize = 12.sp)
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("none", "low", "high", "max").forEach { option -> Text(option, color = if (effortDraft == option) ThemeTokens.background else ThemeTokens.secondary, fontSize = 12.sp, modifier = Modifier.background(if (effortDraft == option) ThemeTokens.accent else ThemeTokens.background, RoundedCornerShape(10.dp)).clickable { effortDraft = option; secureSettings.effort = option }.padding(horizontal = 10.dp, vertical = 9.dp)) } }
+                            }
+                            SettingsCard("VOICE // DEVICE", "语音设备测试") {
+                                Text(status, color = ThemeTokens.secondary, fontSize = 13.sp)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(onClick = { requestMicrophone.launch(Manifest.permission.RECORD_AUDIO) }) { Text(if (microphoneGranted) "已授权" else "授权麦克风") }
+                                    Button(enabled = microphoneGranted, onClick = { if (recording) stopRecording() else startRecording() }) { Text(if (recording) "停止" else "录音") }
+                                }
+                                Button(enabled = hasRecording && !recording, onClick = { playRecording() }) { Text("播放测试录音") }
+                            }
+                        }
                     }
                 }
             }

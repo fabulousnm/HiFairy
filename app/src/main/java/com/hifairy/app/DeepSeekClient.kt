@@ -34,7 +34,7 @@ class DeepSeekClient {
                     val data = line.removePrefix("data: ")
                     if (data == "[DONE]") return@forEach
                     val delta = JSONObject(data).getJSONArray("choices").getJSONObject(0).getJSONObject("delta")
-                    delta.optString("content").takeIf { it.isNotEmpty() }?.let(onText)
+                    (delta.opt("content") as? String)?.takeIf { it.isNotEmpty() }?.let(onText)
                 }
             }
         } finally { connection.disconnect() }
