@@ -124,7 +124,7 @@ private fun ChatAvatar(role: String, avatar: String, modifier: Modifier = Modifi
 }
 
 @Composable
-private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String, onCopy: () -> Unit) {
+private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String, onCopy: () -> Unit, onEdit: () -> Unit) {
     val isUser = message.role == "user"
     var reasoningExpanded by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Top) {
@@ -144,6 +144,7 @@ private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String
                 }
             }
             if (!isUser && message.content.isNotBlank()) Text("复制回答", color = ThemeTokens.secondary, fontSize = 11.sp, modifier = Modifier.clickable(onClick = onCopy).padding(top = 6.dp))
+            if (isUser) Text("编辑", color = ThemeTokens.secondary, fontSize = 11.sp, modifier = Modifier.clickable(onClick = onEdit).padding(top = 6.dp))
         }
         if (isUser) ChatAvatar("user", avatar, Modifier.size(36.dp))
     }
@@ -184,6 +185,7 @@ class MainActivity : ComponentActivity() {
     private var requestId = 0L
     private var renamingId by mutableLongStateOf(0L)
     private var renameDraft by mutableStateOf("")
+    private var editingMessageIndex by mutableIntStateOf(-1)
     private var sending by mutableStateOf(false)
     private lateinit var secureSettings: SecureSettings
     private var keyDraft by mutableStateOf("")
@@ -279,15 +281,19 @@ class MainActivity : ComponentActivity() {
                                 Column(Modifier.fillMaxSize().padding(top = 94.dp).verticalScroll(scrollState).padding(bottom = 16.dp)) {
                                     messages.forEachIndexed { index, message ->
                                         key(currentSessionId, index) {
-                                            ChatBubble(message, displayNameDraft, avatarChoice) {
-                                                (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Fairy 回答", message.content))
-                                            }
+                                            ChatBubble(message, displayNameDraft, avatarChoice,
+                                                onCopy = { (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Fairy 回答", message.content)) },
+                                                onEdit = { stopGeneration(); editingMessageIndex = index; draft = message.content })
                                         }
                                     }
                                 }
                             } else {
                                 Text("晚上好，$displayNameDraft。", color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, letterSpacing = TypeTokens.labelTracking, modifier = Modifier.align(Alignment.Center).offset(y = 120.dp))
                             }
+                        }
+                        if (editingMessageIndex >= 0) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("编辑消息 · 发送后重新生成", color = ThemeTokens.accent, fontSize = 12.sp)
+                            Text("取消", color = ThemeTokens.secondary, fontSize = 12.sp, modifier = Modifier.clickable { editingMessageIndex = -1; draft = "" })
                         }
                         Row(Modifier.fillMaxWidth().background(ThemeTokens.surface, RoundedCornerShape(18.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             TextField(value = draft, onValueChange = { draft = it }, placeholder = { Text("向 Fairy 提问…", color = ThemeTokens.secondary) }, modifier = Modifier.weight(1f), colors = TextFieldDefaults.colors(focusedTextColor = ThemeTokens.text, unfocusedTextColor = ThemeTokens.text, cursorColor = ThemeTokens.accent, focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
@@ -366,6 +372,13 @@ class MainActivity : ComponentActivity() {
         if (input.isEmpty() || sending) return
         if (secureSettings.apiKey().isEmpty()) { page = "settings"; status = "请先配置 DeepSeek API Key"; return }
         draft = ""
+        if (editingMessageIndex >= 0) {
+            val index = editingMessageIndex
+            editingMessageIndex = -1
+            if (index in messages.indices && messages[index].role == "user") {
+                while (messages.size > index) messages.removeAt(messages.lastIndex)
+            }
+        }
         messages.add(ChatMessage("user", input))
         if (currentSessionId == 0L) currentSessionId = System.currentTimeMillis()
         saveCurrentSession()
@@ -441,6 +454,7 @@ class MainActivity : ComponentActivity() {
         saveCurrentSession()
         messages.clear()
         currentSessionId = 0L
+        editingMessageIndex = -1
         draft = ""
         page = "chat"
     }
@@ -451,6 +465,7 @@ class MainActivity : ComponentActivity() {
         messages.clear()
         messages.addAll(session.messages)
         currentSessionId = session.id
+        editingMessageIndex = -1
         page = "chat"
     }
 
