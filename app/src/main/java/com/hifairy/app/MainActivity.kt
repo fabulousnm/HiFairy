@@ -24,6 +24,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.animation.core.*
@@ -37,6 +38,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
@@ -126,14 +129,42 @@ private fun ChatAvatar(role: String, avatar: String, modifier: Modifier = Modifi
 }
 
 @Composable
-private fun MessageAction(symbol: String, label: String, onClick: () -> Unit) {
-    Box(Modifier.size(36.dp).semantics { contentDescription = label }.clickable(onClickLabel = label, onClick = onClick), contentAlignment = Alignment.Center) {
-        Text(symbol, color = ThemeTokens.secondary, fontSize = 21.sp)
+private fun ActionGlyph(kind: String, color: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier.size(20.dp)) {
+        val unit = size.width / 20f
+        val stroke = 2f * unit
+        fun line(x1: Float, y1: Float, x2: Float, y2: Float) {
+            drawLine(color, Offset(x1 * unit, y1 * unit), Offset(x2 * unit, y2 * unit), stroke, cap = StrokeCap.Round)
+        }
+        when (kind) {
+            "copy" -> {
+                line(3f, 13f, 3f, 3f); line(3f, 3f, 13f, 3f); line(13f, 3f, 13f, 5f)
+                line(7f, 7f, 17f, 7f); line(17f, 7f, 17f, 17f)
+                line(17f, 17f, 7f, 17f); line(7f, 17f, 7f, 7f)
+            }
+            "retry" -> {
+                drawArc(color, 42f, 285f, false, style = androidx.compose.ui.graphics.drawscope.Stroke(stroke, cap = StrokeCap.Round))
+                line(17f, 3f, 17f, 8f); line(17f, 8f, 12f, 8f)
+            }
+            "edit" -> {
+                line(4f, 16f, 6f, 11f); line(6f, 11f, 14f, 3f)
+                line(14f, 3f, 17f, 6f); line(17f, 6f, 9f, 14f)
+                line(9f, 14f, 4f, 16f)
+            }
+            "cancel" -> { line(5f, 5f, 15f, 15f); line(15f, 5f, 5f, 15f) }
+        }
     }
 }
 
 @Composable
-private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String, showRegenerate: Boolean, onCopy: () -> Unit, onEdit: () -> Unit, onRegenerate: () -> Unit) {
+private fun MessageAction(kind: String, label: String, onClick: () -> Unit, color: Color = ThemeTokens.secondary) {
+    Box(Modifier.size(40.dp).semantics { contentDescription = label }.clickable(onClickLabel = label, onClick = onClick), contentAlignment = Alignment.Center) {
+        ActionGlyph(kind, color)
+    }
+}
+
+@Composable
+private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String, showRegenerate: Boolean, showEdit: Boolean, onCopy: () -> Unit, onEdit: () -> Unit, onRegenerate: () -> Unit) {
     val isUser = message.role == "user"
     var reasoningExpanded by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Top) {
@@ -153,10 +184,10 @@ private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String
                 }
             }
             if (!isUser && message.content.isNotBlank()) Row(verticalAlignment = Alignment.CenterVertically) {
-                MessageAction("⧉", "复制回答", onCopy)
-                if (showRegenerate) MessageAction("↻", "重新生成回答", onRegenerate)
+                MessageAction("copy", "复制回答", onCopy)
+                if (showRegenerate) MessageAction("retry", "重新生成回答", onRegenerate)
             }
-            if (isUser) MessageAction("✎", "编辑消息", onEdit)
+            if (isUser && showEdit) MessageAction("edit", "编辑并重新发送", onEdit)
         }
         if (isUser) ChatAvatar("user", avatar, Modifier.size(36.dp))
     }
@@ -295,6 +326,7 @@ class MainActivity : ComponentActivity() {
                                         key(currentSessionId, index) {
                                             ChatBubble(message, displayNameDraft, avatarChoice,
                                                 showRegenerate = index == messages.lastIndex && !sending,
+                                                showEdit = index == messages.indexOfLast { it.role == "user" } && !sending,
                                                 onCopy = { (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Fairy 回答", message.content)) },
                                                 onEdit = { stopGeneration(); editingMessageIndex = index; draft = message.content },
                                                 onRegenerate = { regenerate() })
@@ -305,12 +337,10 @@ class MainActivity : ComponentActivity() {
                                 Text("晚上好，$displayNameDraft。", color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, letterSpacing = TypeTokens.labelTracking, modifier = Modifier.align(Alignment.Center).offset(y = 120.dp))
                             }
                         }
-                        if (editingMessageIndex >= 0) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("编辑消息 · 发送后重新生成", color = ThemeTokens.accent, fontSize = 12.sp)
-                            Text("取消", color = ThemeTokens.secondary, fontSize = 12.sp, modifier = Modifier.clickable { editingMessageIndex = -1; draft = "" })
-                        }
-                        Row(Modifier.fillMaxWidth().background(ThemeTokens.surface, RoundedCornerShape(18.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth().background(if (editingMessageIndex >= 0) Color(0xFF1C2549) else ThemeTokens.surface, RoundedCornerShape(18.dp)).border(if (editingMessageIndex >= 0) 1.dp else 0.dp, ThemeTokens.accent, RoundedCornerShape(18.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            if (editingMessageIndex >= 0) ActionGlyph("edit", ThemeTokens.accent, Modifier.padding(start = 8.dp))
                             TextField(value = draft, onValueChange = { draft = it }, placeholder = { Text("向 Fairy 提问…", color = ThemeTokens.secondary) }, modifier = Modifier.weight(1f), colors = TextFieldDefaults.colors(focusedTextColor = ThemeTokens.text, unfocusedTextColor = ThemeTokens.text, cursorColor = ThemeTokens.accent, focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
+                            if (editingMessageIndex >= 0) MessageAction("cancel", "取消编辑", { editingMessageIndex = -1; draft = "" }, ThemeTokens.text)
                             Text(if (sending) "■" else "➤", color = ThemeTokens.accent, fontSize = 25.sp, modifier = Modifier.clickable { if (sending) stopGeneration() else sendMessage() })
                         }
                     }
