@@ -16,6 +16,7 @@ import android.content.pm.ActivityInfo
 import java.io.File
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -28,11 +29,16 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.animation.core.*
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Button
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -218,6 +224,7 @@ class MainActivity : ComponentActivity() {
     private var recorder: MediaRecorder? = null
     private var player: MediaPlayer? = null
     private var page by mutableStateOf("chat")
+    private var historyOpen by mutableStateOf(false)
     private var introPhase by mutableStateOf("boot")
     private var draft by mutableStateOf("")
     private val messages = mutableStateListOf<ChatMessage>()
@@ -227,6 +234,7 @@ class MainActivity : ComponentActivity() {
     private var activeClient: DeepSeekClient? = null
     private var requestId = 0L
     private var renamingId by mutableLongStateOf(0L)
+    private var historyMenuId by mutableLongStateOf(0L)
     private var renameDraft by mutableStateOf("")
     private var editingMessageIndex by mutableIntStateOf(-1)
     private var sending by mutableStateOf(false)
@@ -260,6 +268,7 @@ class MainActivity : ComponentActivity() {
         avatarChoice = secureSettings.avatar
         microphoneGranted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         setContent {
+            BackHandler(historyOpen) { historyOpen = false }
             val context = LocalContext.current
             val scope = rememberCoroutineScope()
             val curtain = remember { Animatable(0f) }
@@ -296,12 +305,12 @@ class MainActivity : ComponentActivity() {
             Column(Modifier.fillMaxSize().background(ThemeTokens.background).padding(20.dp)) {
                 if (page == "settings") {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text("‹", color = ThemeTokens.accent, fontSize = 34.sp, modifier = Modifier.clickable { page = "history" }.padding(end = 24.dp))
+                        Text("‹", color = ThemeTokens.accent, fontSize = 34.sp, modifier = Modifier.clickable { page = "chat"; historyOpen = true }.padding(end = 24.dp))
                         Text("设置", color = ThemeTokens.text, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                     }
                 } else {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("☰", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { page = "history" })
+                        Text("☰", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { historyOpen = true })
                         Text("H.D.D Ⅲ", color = ThemeTokens.text, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.brandTracking)
                         Text("＋", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { newChat() })
                     }
@@ -344,25 +353,6 @@ class MainActivity : ComponentActivity() {
                             Text(if (sending) "■" else "➤", color = ThemeTokens.accent, fontSize = 25.sp, modifier = Modifier.clickable { if (sending) stopGeneration() else sendMessage() })
                         }
                     }
-                    "history" -> {
-                        Text("历史对话", color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, modifier = Modifier.padding(top = 32.dp))
-                        Text("＋  新对话", color = ThemeTokens.accent, modifier = Modifier.fillMaxWidth().clickable { newChat() }.padding(vertical = 24.dp))
-                        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                            sessions.asReversed().forEach { session ->
-                                Column(Modifier.fillMaxWidth().padding(bottom = 8.dp).background(ThemeTokens.surface, RoundedCornerShape(14.dp)).padding(12.dp)) {
-                                    if (renamingId == session.id) {
-                                        TextField(renameDraft, onValueChange = { renameDraft = it.take(50) }, modifier = Modifier.fillMaxWidth(), colors = darkFieldColors())
-                                        Text("保存", color = ThemeTokens.accent, modifier = Modifier.clickable { renameSession(session.id, renameDraft); renamingId = 0L }.padding(top = 8.dp))
-                                    } else Text(session.title, color = ThemeTokens.text, modifier = Modifier.fillMaxWidth().clickable { openSession(session) }.padding(vertical = 8.dp))
-                                    Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                                        Text("重命名", color = ThemeTokens.secondary, fontSize = 12.sp, modifier = Modifier.clickable { renamingId = session.id; renameDraft = session.title })
-                                        Text("删除", color = ThemeTokens.secondary, fontSize = 12.sp, modifier = Modifier.clickable { deleteSession(session.id) })
-                                    }
-                                }
-                            }
-                        }
-                        Text("设置  ›", color = ThemeTokens.text, modifier = Modifier.fillMaxWidth().clickable { page = "settings" }.padding(vertical = 20.dp))
-                    }
                     else -> {
                         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = 28.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
                             SettingsCard("PROFILE // IDENTITY", "我的资料") {
@@ -404,6 +394,38 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+            }
+            if (introPhase == "ready" || introPhase == "greeting") {
+                if (historyOpen) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)).clickable { historyOpen = false })
+                AnimatedVisibility(visible = historyOpen, enter = slideInHorizontally { -it }, exit = slideOutHorizontally { -it }) {
+                    Column(Modifier.fillMaxHeight().fillMaxWidth(0.55f).background(ThemeTokens.surface).border(1.dp, Color(0xFF25335C)).padding(horizontal = 14.dp, vertical = 24.dp)) {
+                        Text("历史对话", color = ThemeTokens.text, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                        Text("＋  新对话", color = ThemeTokens.accent, modifier = Modifier.fillMaxWidth().clickable { newChat() }.padding(vertical = 22.dp))
+                        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                            sessions.asReversed().forEach { session ->
+                                Column(Modifier.fillMaxWidth().padding(bottom = 8.dp).background(ThemeTokens.background, RoundedCornerShape(12.dp)).padding(10.dp)) {
+                                    if (renamingId == session.id) {
+                                        TextField(renameDraft, onValueChange = { renameDraft = it.take(50) }, modifier = Modifier.fillMaxWidth(), colors = darkFieldColors())
+                                        Text("保存", color = ThemeTokens.accent, modifier = Modifier.clickable { renameSession(session.id, renameDraft); renamingId = 0L }.padding(top = 8.dp))
+                                    } else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                        Text(session.title, color = ThemeTokens.text, maxLines = 2, modifier = Modifier.weight(1f).clickable { openSession(session) }.padding(vertical = 8.dp))
+                                        Box(Modifier.size(32.dp).clickable(onClickLabel = "会话选项") { historyMenuId = session.id }, contentAlignment = Alignment.Center) {
+                                            Canvas(Modifier.size(18.dp)) {
+                                                val dot = 1.6.dp.toPx()
+                                                listOf(3f, 9f, 15f).forEach { y -> drawCircle(ThemeTokens.secondary, dot, Offset(size.width / 2, y.dp.toPx())) }
+                                            }
+                                            DropdownMenu(expanded = historyMenuId == session.id, onDismissRequest = { historyMenuId = 0L }, modifier = Modifier.background(ThemeTokens.surface)) {
+                                                DropdownMenuItem(text = { Text("重命名", color = ThemeTokens.text) }, onClick = { historyMenuId = 0L; renamingId = session.id; renameDraft = session.title })
+                                                DropdownMenuItem(text = { Text("删除", color = ThemeTokens.text) }, onClick = { historyMenuId = 0L; deleteSession(session.id) })
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Text("设置  ›", color = ThemeTokens.text, modifier = Modifier.fillMaxWidth().clickable { historyOpen = false; page = "settings" }.padding(vertical = 16.dp))
+                    }
+                }
             }
             Box(Modifier.fillMaxSize().alpha(curtain.value).background(Color.Black))
             }
@@ -493,6 +515,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun newChat() {
+        historyOpen = false
         stopGeneration()
         saveCurrentSession()
         messages.clear()
@@ -503,6 +526,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openSession(session: ChatSession) {
+        historyOpen = false
         stopGeneration()
         saveCurrentSession()
         messages.clear()
