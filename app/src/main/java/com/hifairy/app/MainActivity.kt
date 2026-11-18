@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.media.MediaPlayer
 import android.media.MediaRecorder
+import android.widget.VideoView
 import android.os.Build
 import java.io.File
 import androidx.activity.ComponentActivity
@@ -14,6 +15,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.Image
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Button
 import androidx.compose.material3.TextField
@@ -24,6 +26,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -54,6 +59,7 @@ class MainActivity : ComponentActivity() {
     private var recorder: MediaRecorder? = null
     private var player: MediaPlayer? = null
     private var page by mutableStateOf("chat")
+    private var introPhase by mutableStateOf("boot")
     private var draft by mutableStateOf("")
     private val recordingFile by lazy { File(cacheDir, "voice-check.m4a") }
     private val requestMicrophone = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
@@ -64,6 +70,29 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         microphoneGranted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         setContent {
+            val context = LocalContext.current
+            val pulse = rememberInfiniteTransition(label = "eye pulse")
+            val eyeScale by pulse.animateFloat(initialValue = 0.97f, targetValue = 1.04f, animationSpec = infiniteRepeatable(tween(1700, easing = EaseInOutSine), RepeatMode.Reverse), label = "eye scale")
+            LaunchedEffect(introPhase) {
+                if (introPhase == "greeting") {
+                    kotlinx.coroutines.delay(2100)
+                    introPhase = "dock"
+                }
+            }
+            if (introPhase == "boot") {
+                Box(Modifier.fillMaxSize().background(Color(0xFF02050D))) {
+                    AndroidView(
+                        factory = { VideoView(it).apply {
+                            setVideoURI(android.net.Uri.parse("android.resource://${context.packageName}/${R.raw.fairy_boot}"))
+                            setOnCompletionListener { introPhase = "greeting" }
+                            start()
+                        } },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    Text("H.D.D // BOOT SEQUENCE", color = ThemeTokens.accent, fontSize = 11.sp, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.eyebrowTracking, modifier = Modifier.align(Alignment.TopStart).padding(24.dp))
+                    Text("SKIP  ›", color = ThemeTokens.text, fontSize = 12.sp, fontFamily = TypeTokens.terminalFont, modifier = Modifier.align(Alignment.TopEnd).clickable { introPhase = "greeting" }.padding(24.dp))
+                }
+            } else {
             Column(Modifier.fillMaxSize().background(ThemeTokens.background).padding(20.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("☰", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { page = "history" })
@@ -72,12 +101,21 @@ class MainActivity : ComponentActivity() {
                 }
                 when (page) {
                     "chat" -> {
+                        if (introPhase == "dock") {
+                            Row(Modifier.fillMaxWidth().padding(top = 28.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Image(painterResource(R.drawable.fairy_eye), contentDescription = "Fairy 常驻眼徽", modifier = Modifier.size(54.dp).scale(eyeScale))
+                                Spacer(Modifier.width(12.dp))
+                                Text("FAIRY // ONLINE", color = ThemeTokens.accent, fontSize = 10.sp, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.eyebrowTracking)
+                            }
+                        }
                         Column(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                            Image(painterResource(R.drawable.fairy_eye), contentDescription = "Fairy 眼徽", modifier = Modifier.size(154.dp))
+                            if (introPhase == "greeting") {
+                            Image(painterResource(R.drawable.fairy_eye), contentDescription = "Fairy 眼徽", modifier = Modifier.size(if (introPhase == "greeting") 190.dp else 154.dp).scale(eyeScale))
                             Spacer(Modifier.height(24.dp))
                             Text("晚上好，绳匠。", color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, letterSpacing = TypeTokens.labelTracking)
                             Spacer(Modifier.height(8.dp))
                             Text("FAIRY // READY", color = ThemeTokens.secondary, fontSize = 10.sp, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.eyebrowTracking)
+                            }
                         }
                         Row(Modifier.fillMaxWidth().background(ThemeTokens.surface, RoundedCornerShape(18.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             TextField(value = draft, onValueChange = { draft = it }, placeholder = { Text("向 Fairy 提问…") }, modifier = Modifier.weight(1f), colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent))
@@ -99,6 +137,7 @@ class MainActivity : ComponentActivity() {
                         Button(enabled = hasRecording && !recording, onClick = { playRecording() }) { Text("播放录音") }
                     }
                 }
+            }
             }
         }
     }
