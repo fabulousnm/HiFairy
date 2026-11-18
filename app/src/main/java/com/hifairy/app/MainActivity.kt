@@ -291,9 +291,15 @@ class MainActivity : ComponentActivity() {
             val drawerProgress = remember { Animatable(0f) }
             var dragProgress by remember { mutableFloatStateOf(0f) }
             var dragStartedOpen by remember { mutableStateOf(false) }
-            val closeDrawer = { historyOpen = false; scope.launch { drawerProgress.animateTo(0f, DrawerMotion.settle) } }
-            BackHandler(historyOpen || drawerProgress.value > 0.01f) { closeDrawer() }
-            LaunchedEffect(historyOpen) { drawerProgress.animateTo(if (historyOpen) 1f else 0f, DrawerMotion.settle) }
+            var draggingDrawer by remember { mutableStateOf(false) }
+            var settleVersion by remember { mutableIntStateOf(0) }
+            val closeDrawer = { historyOpen = false; settleVersion++ }
+            BackHandler(historyOpen || draggingDrawer || drawerProgress.value > 0.01f) { closeDrawer() }
+            LaunchedEffect(historyOpen, settleVersion) {
+                val target = if (historyOpen) 1f else 0f
+                drawerProgress.animateTo(target, DrawerMotion.settle)
+                drawerProgress.snapTo(target)
+            }
             val curtain = remember { Animatable(0f) }
             val pulse = rememberInfiniteTransition(label = "eye pulse")
             val eyeScale by pulse.animateFloat(initialValue = 0.97f, targetValue = 1.04f, animationSpec = infiniteRepeatable(tween(1700, easing = EaseInOutSine), RepeatMode.Reverse), label = "eye scale")
@@ -314,10 +320,9 @@ class MainActivity : ComponentActivity() {
             BoxWithConstraints(Modifier.fillMaxSize().background(ThemeTokens.background).draggable(
                 state = rememberDraggableState { delta ->
                     dragProgress = (dragProgress + delta / drawerWidthPx).coerceIn(0f, 1f)
-                    scope.launch { drawerProgress.snapTo(dragProgress) }
                 },
                 orientation = Orientation.Horizontal,
-                onDragStarted = { drawerProgress.stop(); dragProgress = drawerProgress.value.coerceIn(0f, 1f); dragStartedOpen = dragProgress >= 0.5f },
+                onDragStarted = { drawerProgress.stop(); dragProgress = drawerProgress.value.coerceIn(0f, 1f); dragStartedOpen = dragProgress >= 0.5f; draggingDrawer = true },
                 onDragStopped = { velocity ->
                     val open = when {
                         velocity > DrawerMotion.flingVelocity -> true
@@ -326,12 +331,13 @@ class MainActivity : ComponentActivity() {
                         else -> dragProgress >= DrawerMotion.openThreshold
                     }
                     drawerProgress.snapTo(dragProgress)
-                    drawerProgress.animateTo(if (open) 1f else 0f, DrawerMotion.settle)
+                    draggingDrawer = false
                     historyOpen = open
+                    settleVersion++
                 }
             )) {
             val drawerWidth = maxWidth * 0.75f
-            val rawProgress = drawerProgress.value
+            val rawProgress = if (draggingDrawer) dragProgress else drawerProgress.value
             val progress = rawProgress.coerceIn(0f, 1f)
             val bounce = (rawProgress - 1f).coerceAtLeast(0f) * 0.16f + rawProgress.coerceAtMost(0f) * 0.1f
             val chatOffset = drawerWidth * (progress + bounce)
