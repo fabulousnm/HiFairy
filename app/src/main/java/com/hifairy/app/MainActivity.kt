@@ -14,6 +14,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.Image
 import androidx.compose.animation.core.*
@@ -29,11 +30,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 
 private object ThemeTokens {
     val background = Color(0xFF070818)
@@ -73,27 +76,36 @@ class MainActivity : ComponentActivity() {
         microphoneGranted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         setContent {
             val context = LocalContext.current
+            val scope = rememberCoroutineScope()
+            val curtain = remember { Animatable(0f) }
             val pulse = rememberInfiniteTransition(label = "eye pulse")
             val eyeScale by pulse.animateFloat(initialValue = 0.97f, targetValue = 1.04f, animationSpec = infiniteRepeatable(tween(1700, easing = EaseInOutSine), RepeatMode.Reverse), label = "eye scale")
             LaunchedEffect(introPhase) {
-                requestedOrientation = if (introPhase == "boot") ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                if (introPhase == "boot") requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                if (introPhase == "transition") {
+                    curtain.animateTo(1f, tween(320))
+                    requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                    kotlinx.coroutines.delay(380)
+                    introPhase = "greeting"
+                    scope.launch { curtain.animateTo(0f, tween(380)) }
+                }
                 if (introPhase == "greeting") {
                     kotlinx.coroutines.delay(2100)
                     introPhase = "ready"
                 }
             }
-            if (introPhase == "boot") {
+            Box(Modifier.fillMaxSize()) {
+            if (introPhase == "boot" || introPhase == "transition") {
                 Box(Modifier.fillMaxSize().background(Color(0xFF02050D))) {
                     AndroidView(
                         factory = { VideoView(it).apply {
                             setVideoURI(android.net.Uri.parse("android.resource://${context.packageName}/${R.raw.fairy_boot}"))
-                            setOnCompletionListener { introPhase = "greeting" }
+                            setOnCompletionListener { if (introPhase == "boot") introPhase = "transition" }
                             start()
                         } },
                         modifier = Modifier.fillMaxSize()
                     )
-                    Text("H.D.D // BOOT SEQUENCE", color = ThemeTokens.accent, fontSize = 11.sp, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.eyebrowTracking, modifier = Modifier.align(Alignment.TopStart).padding(24.dp))
-                    Text("SKIP  ›", color = ThemeTokens.text, fontSize = 12.sp, fontFamily = TypeTokens.terminalFont, modifier = Modifier.align(Alignment.TopEnd).clickable { introPhase = "greeting" }.padding(24.dp))
+                    if (introPhase == "boot") Text("SKIP", color = Color(0xD9CEF0FF), fontSize = 10.sp, fontFamily = TypeTokens.interfaceFont, letterSpacing = 2.6.sp, modifier = Modifier.align(Alignment.TopEnd).padding(20.dp).background(Color(0x8C061022)).border(1.dp, Color(0x616EDCFF)).clickable { introPhase = "transition" }.padding(horizontal = 14.dp, vertical = 7.dp))
                 }
             } else {
             Column(Modifier.fillMaxSize().background(ThemeTokens.background).padding(20.dp)) {
@@ -140,6 +152,8 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+            }
+            Box(Modifier.fillMaxSize().alpha(curtain.value).background(Color.Black))
             }
         }
     }
