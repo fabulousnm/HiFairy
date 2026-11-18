@@ -90,6 +90,14 @@ private object ThemeTokens {
     val drawerVeil = Color(0xFFC8D5FF)
 }
 
+private object DrawerMotion {
+    const val openThreshold = 0.38f
+    const val closeThreshold = 0.62f
+    const val flingVelocity = 650f
+    const val damping = 0.57f
+    val settle = spring<Float>(dampingRatio = damping, stiffness = Spring.StiffnessMediumLow)
+}
+
 private object TypeTokens {
     val interfaceFont = FontFamily.SansSerif
     val terminalFont = FontFamily.Monospace
@@ -281,9 +289,11 @@ class MainActivity : ComponentActivity() {
             val scope = rememberCoroutineScope()
             val drawerWidthPx = with(LocalDensity.current) { LocalConfiguration.current.screenWidthDp.dp.toPx() * 0.75f }
             val drawerProgress = remember { Animatable(0f) }
-            val closeDrawer = { historyOpen = false; scope.launch { drawerProgress.animateTo(0f, tween(240)) } }
+            var dragProgress by remember { mutableFloatStateOf(0f) }
+            var dragStartedOpen by remember { mutableStateOf(false) }
+            val closeDrawer = { historyOpen = false; scope.launch { drawerProgress.animateTo(0f, DrawerMotion.settle) } }
             BackHandler(historyOpen || drawerProgress.value > 0.01f) { closeDrawer() }
-            LaunchedEffect(historyOpen) { drawerProgress.animateTo(if (historyOpen) 1f else 0f, tween(360)) }
+            LaunchedEffect(historyOpen) { drawerProgress.animateTo(if (historyOpen) 1f else 0f, DrawerMotion.settle) }
             val curtain = remember { Animatable(0f) }
             val pulse = rememberInfiniteTransition(label = "eye pulse")
             val eyeScale by pulse.animateFloat(initialValue = 0.97f, targetValue = 1.04f, animationSpec = infiniteRepeatable(tween(1700, easing = EaseInOutSine), RepeatMode.Reverse), label = "eye scale")
@@ -303,19 +313,28 @@ class MainActivity : ComponentActivity() {
             }
             BoxWithConstraints(Modifier.fillMaxSize().background(ThemeTokens.background).draggable(
                 state = rememberDraggableState { delta ->
-                    scope.launch { drawerProgress.snapTo((drawerProgress.value + delta / drawerWidthPx).coerceIn(0f, 1f)) }
+                    dragProgress = (dragProgress + delta / drawerWidthPx).coerceIn(0f, 1f)
+                    scope.launch { drawerProgress.snapTo(dragProgress) }
                 },
                 orientation = Orientation.Horizontal,
-                onDragStarted = { drawerProgress.stop() },
+                onDragStarted = { drawerProgress.stop(); dragProgress = drawerProgress.value.coerceIn(0f, 1f); dragStartedOpen = dragProgress >= 0.5f },
                 onDragStopped = { velocity ->
-                    val open = if (velocity > 700f) true else if (velocity < -700f) false else drawerProgress.value >= 0.5f
-                    drawerProgress.animateTo(if (open) 1f else 0f, tween(240))
+                    val open = when {
+                        velocity > DrawerMotion.flingVelocity -> true
+                        velocity < -DrawerMotion.flingVelocity -> false
+                        dragStartedOpen -> dragProgress >= DrawerMotion.closeThreshold
+                        else -> dragProgress >= DrawerMotion.openThreshold
+                    }
+                    drawerProgress.snapTo(dragProgress)
+                    drawerProgress.animateTo(if (open) 1f else 0f, DrawerMotion.settle)
                     historyOpen = open
                 }
             )) {
             val drawerWidth = maxWidth * 0.75f
-            val progress = drawerProgress.value
-            val chatOffset = drawerWidth * progress
+            val rawProgress = drawerProgress.value
+            val progress = rawProgress.coerceIn(0f, 1f)
+            val bounce = (rawProgress - 1f).coerceAtLeast(0f) * 0.16f + rawProgress.coerceAtMost(0f) * 0.1f
+            val chatOffset = drawerWidth * (progress + bounce)
             val chatScale = 1f - 0.04f * progress
             val chatRotation = -5f * progress
             if (introPhase == "boot" || introPhase == "transition") {
@@ -434,10 +453,13 @@ class MainActivity : ComponentActivity() {
             }
             }
             if (introPhase == "ready" || introPhase == "greeting") {
-                if (progress > 0.001f) Box(Modifier.align(Alignment.CenterEnd).width(maxWidth - chatOffset).fillMaxHeight().background(Brush.horizontalGradient(listOf(Color.Transparent, ThemeTokens.drawerVeil.copy(alpha = 0.32f * progress)))).clickable(onClickLabel = "收起历史对话") { closeDrawer() })
+                if (progress > 0.001f) Box(Modifier.align(Alignment.CenterEnd).width(maxWidth - drawerWidth * progress).fillMaxHeight().background(Brush.horizontalGradient(listOf(Color.Transparent, ThemeTokens.drawerVeil.copy(alpha = 0.32f * progress)))).clickable(onClickLabel = "收起历史对话") { closeDrawer() })
                 if (progress > 0.001f || historyOpen) {
                     val drawerShape = RoundedCornerShape(topEnd = 20.dp, bottomEnd = 20.dp)
-                    Column(Modifier.offset(x = -drawerWidth * (1f - progress)).fillMaxHeight().width(drawerWidth).shadow(24.dp, drawerShape).background(ThemeTokens.surface, drawerShape).border(1.dp, Color(0xFF384878), drawerShape).padding(horizontal = 16.dp, vertical = 24.dp)) {
+                    Column(Modifier.offset(x = -drawerWidth * (1f - progress)).graphicsLayer {
+                        scaleX = 1f + (rawProgress - 1f).coerceAtLeast(0f) * 0.25f
+                        transformOrigin = TransformOrigin(0f, 0.5f)
+                    }.fillMaxHeight().width(drawerWidth).shadow(24.dp, drawerShape).background(ThemeTokens.surface, drawerShape).border(1.dp, Color(0xFF384878), drawerShape).padding(horizontal = 16.dp, vertical = 24.dp)) {
                         Text("历史对话", color = ThemeTokens.text, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                         Text("＋  新对话", color = ThemeTokens.accent, modifier = Modifier.fillMaxWidth().clickable { newChat() }.padding(vertical = 22.dp))
                         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
