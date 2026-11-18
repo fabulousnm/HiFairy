@@ -23,6 +23,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,6 +67,12 @@ class MainActivity : ComponentActivity() {
     private var introPhase by mutableStateOf("boot")
     private var draft by mutableStateOf("")
     private val messages = mutableStateListOf<String>()
+    private val conversation = mutableListOf<Pair<String, String>>()
+    private var sending by mutableStateOf(false)
+    private lateinit var secureSettings: SecureSettings
+    private var keyDraft by mutableStateOf("")
+    private var modelDraft by mutableStateOf("deepseek-flash")
+    private var effortDraft by mutableStateOf("high")
     private val recordingFile by lazy { File(cacheDir, "voice-check.m4a") }
     private val requestMicrophone = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         microphoneGranted = it
@@ -73,6 +80,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        secureSettings = SecureSettings(this)
+        modelDraft = secureSettings.model
+        effortDraft = secureSettings.effort
         microphoneGranted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         setContent {
             val context = LocalContext.current
@@ -112,7 +122,7 @@ class MainActivity : ComponentActivity() {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("☰", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { page = "history" })
                     Text("H.D.D Ⅲ", color = ThemeTokens.text, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.brandTracking)
-                    Text("＋", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { page = "chat"; draft = ""; messages.clear() })
+                    Text("＋", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { page = "chat"; draft = ""; messages.clear(); conversation.clear() })
                 }
                 when (page) {
                     "chat" -> {
@@ -133,17 +143,24 @@ class MainActivity : ComponentActivity() {
                         }
                         Row(Modifier.fillMaxWidth().background(ThemeTokens.surface, RoundedCornerShape(18.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             TextField(value = draft, onValueChange = { draft = it }, placeholder = { Text("向 Fairy 提问…") }, modifier = Modifier.weight(1f), colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent))
-                            Text("➤", color = ThemeTokens.accent, fontSize = 25.sp, modifier = Modifier.clickable { if (draft.isNotBlank()) { messages.add(draft.trim()); draft = "" } })
+                            Text("➤", color = ThemeTokens.accent, fontSize = 25.sp, modifier = Modifier.clickable { sendMessage() })
                         }
                     }
                     "history" -> {
                         Text("历史对话", color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, modifier = Modifier.padding(top = 32.dp))
-                        Text("新对话", color = ThemeTokens.accent, modifier = Modifier.fillMaxWidth().clickable { page = "chat"; messages.clear() }.padding(vertical = 24.dp))
+                        Text("新对话", color = ThemeTokens.accent, modifier = Modifier.fillMaxWidth().clickable { page = "chat"; messages.clear(); conversation.clear() }.padding(vertical = 24.dp))
                         Spacer(Modifier.weight(1f))
                         Text("设置  ›", color = ThemeTokens.text, modifier = Modifier.fillMaxWidth().clickable { page = "settings" }.padding(vertical = 20.dp))
                     }
                     else -> {
                         Text("设置", color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, modifier = Modifier.padding(top = 32.dp))
+                        Text("DeepSeek API Key", color = ThemeTokens.accent, modifier = Modifier.padding(top = 28.dp))
+                        TextField(value = keyDraft, onValueChange = { keyDraft = it }, visualTransformation = PasswordVisualTransformation(), placeholder = { Text(if (secureSettings.apiKey().isEmpty()) "输入 API Key" else "已保存；输入新 Key 可替换") }, modifier = Modifier.fillMaxWidth())
+                        Button(onClick = { if (keyDraft.isNotBlank()) { secureSettings.saveApiKey(keyDraft.trim()); keyDraft = ""; status = "API Key 已加密保存" } }) { Text("保存 Key") }
+                        Text("模型", color = ThemeTokens.accent)
+                        TextField(value = modelDraft, onValueChange = { modelDraft = it; secureSettings.model = it }, modifier = Modifier.fillMaxWidth())
+                        Text("思考强度", color = ThemeTokens.accent)
+                        Row { listOf("none", "low", "high", "max").forEach { option -> Text(option, color = if (effortDraft == option) ThemeTokens.accent else ThemeTokens.secondary, modifier = Modifier.clickable { effortDraft = option; secureSettings.effort = option }.padding(8.dp)) } }
                         Text("语音设备测试", color = ThemeTokens.accent, modifier = Modifier.padding(top = 32.dp))
                         Button(onClick = { requestMicrophone.launch(Manifest.permission.RECORD_AUDIO) }) { Text(if (microphoneGranted) "麦克风已授权" else "授权麦克风") }
                         Text(status, color = ThemeTokens.secondary)
@@ -156,6 +173,32 @@ class MainActivity : ComponentActivity() {
             Box(Modifier.fillMaxSize().alpha(curtain.value).background(Color.Black))
             }
         }
+    }
+
+    private fun sendMessage() {
+        val input = draft.trim()
+        if (input.isEmpty() || sending) return
+        val apiKey = secureSettings.apiKey()
+        if (apiKey.isEmpty()) { page = "settings"; status = "请先配置 DeepSeek API Key"; return }
+        draft = ""
+        messages.add("你：$input")
+        conversation.add("user" to input)
+        val responseIndex = messages.size
+        messages.add("Fairy：")
+        sending = true
+        val context = conversation.toList()
+        Thread {
+            val answer = StringBuilder()
+            try {
+                DeepSeekClient().stream(apiKey, secureSettings.model, secureSettings.effort, context) { token ->
+                    answer.append(token)
+                    runOnUiThread { messages[responseIndex] = "Fairy：$answer" }
+                }
+                runOnUiThread { conversation.add("assistant" to answer.toString()); sending = false }
+            } catch (e: Exception) {
+                runOnUiThread { messages[responseIndex] = "请求失败：${e.message}"; sending = false }
+            }
+        }.start()
     }
 
     private fun startRecording() {
