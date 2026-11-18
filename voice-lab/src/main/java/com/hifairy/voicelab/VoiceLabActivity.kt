@@ -6,20 +6,19 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TextView
-import org.json.JSONObject
-import org.vosk.Model
-import org.vosk.Recognizer
-import org.vosk.android.RecognitionListener
-import org.vosk.android.SpeechService
-import org.vosk.android.StorageService
 import kotlin.concurrent.thread
 
 class VoiceLabActivity : Activity() {
@@ -36,144 +35,134 @@ class VoiceLabActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var metrics: TextView
     private lateinit var recordButton: Button
-    private var model: Model? = null
-    private var service: SpeechService? = null
-    private var recognizer: Recognizer? = null
-    private var loading = false
-    private var stopping = false
-    private var confirmed = ""
-    private var finalText = ""
-    private var startedAt = 0L
-    private var firstPartialAt = 0L
-    private var loadMillis = 0L
-    private var report = ""
+    private lateinit var decodeButton: Button
+    private var selectedModel = SpeechModel.ZIPFORMER
+    @Volatile private var recording = false
+    @Volatile private var busy = false
+    private var recordedSamples = FloatArray(0)
+    private var recordMillis = 0L
+    private val reports = linkedMapOf<SpeechModel, String>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(28, 28, 28, 28) }
-        val scroll = ScrollView(this).apply { addView(root) }
-        setContentView(scroll)
-        fun label(text: String) = TextView(this).apply { this.text = text; textSize = 18f; setPadding(0, 14, 0, 14); root.addView(this) }
-        label("HiFairy 语音识别实验室")
-        label("请照着下面的文字朗读。可修改参考文本后再测试。")
+        setContentView(ScrollView(this).apply { addView(root) })
+        fun label(value: String) = TextView(this).apply { text = value; textSize = 17f; setPadding(0, 12, 0, 12); root.addView(this) }
+        label("HiFairy · 三模型语音测试")
+        label("先照着参考句录一次音，再切换三个模型识别同一段录音。")
         reference = EditText(this).apply { setText(samples[sampleIndex]); minLines = 2; root.addView(this, ViewGroup.LayoutParams(-1, -2)) }
-        Button(this).apply { text = "下一条测试句"; setOnClickListener { sampleIndex = (sampleIndex + 1) % samples.size; reference.setText(samples[sampleIndex]); resetResult() }; root.addView(this) }
-        recordButton = Button(this).apply { text = "开始录音识别"; setOnClickListener { if (service == null) start() else stop() }; root.addView(this) }
-        status = label("准备就绪。首次启动需解包并加载模型。")
+        Button(this).apply { text = "下一条测试句"; setOnClickListener { sampleIndex = (sampleIndex + 1) % samples.size; reference.setText(samples[sampleIndex]); recordedSamples = FloatArray(0); reports.clear(); resetResult() }; root.addView(this) }
+        recordButton = Button(this).apply { text = "录制测试语音"; setOnClickListener { if (recording) recording = false else startRecording() }; root.addView(this) }
+        label("选择识别模型：")
+        val choices = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL; root.addView(this) }
+        SpeechModel.entries.forEachIndexed { index, model ->
+            choices.addView(RadioButton(this).apply { text = "${model.label}（${model.detail}）"; id = index + 1; isChecked = index == 0; setOnClickListener { selectedModel = model; resetResult() } })
+        }
+        decodeButton = Button(this).apply { text = "用所选模型识别本次录音"; isEnabled = false; setOnClickListener { decode() }; root.addView(this) }
+        status = label("等待录音。模型均在本机运行，无需联网。")
         result = label("识别结果：")
         metrics = label("准确率指标：等待测试")
-        Button(this).apply { text = "复制测试报告"; setOnClickListener { (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("语音测试报告", report)); status.text = "报告已复制" }; root.addView(this) }
-        label("测试条件：Vosk small-cn-0.22；16 kHz、单声道、VOICE_RECOGNITION 音频源。字符错误率越低越好。")
+        Button(this).apply { text = "复制三模型报告"; setOnClickListener { copyReport() }; root.addView(this) }
+        label("CER 为字符错误率，越低越好；忽略标点和空格。模型加载与推理时间分开计量。")
     }
 
-    private fun resetResult() { result.text = "识别结果："; metrics.text = "准确率指标：等待测试"; finalText = "" }
+    private fun resetResult() { result.text = "识别结果："; metrics.text = "准确率指标：等待测试" }
 
-    private fun start() {
+    private fun startRecording() {
+        if (busy) return
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1)
             return
         }
-        if (loading) return
-        if (model == null) {
-            loading = true
-            recordButton.isEnabled = false
-            status.text = "正在加载离线模型…"
-            val loadStarted = SystemClock.elapsedRealtime()
-            StorageService.unpack(this, "vosk-model-small-cn-0.22", "vosk-cn", { loaded ->
-                model = loaded
-                loadMillis = SystemClock.elapsedRealtime() - loadStarted
-                loading = false
-                recordButton.isEnabled = true
-                beginListening()
-            }, { error ->
-                loading = false
-                recordButton.isEnabled = true
-                status.text = "模型加载失败：${error.message}"
-            })
-        } else beginListening()
+        recordedSamples = FloatArray(0)
+        reports.clear()
+        resetResult()
+        recording = true
+        busy = true
+        recordButton.text = "停止录音"
+        decodeButton.isEnabled = false
+        status.text = "正在录音，最长 30 秒…"
+        thread(name = "voice-lab-record") {
+            val minimum = AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+            val bufferSize = maxOf(minimum, 3200)
+            var recorder: AudioRecord? = null
+            try {
+                @Suppress("MissingPermission")
+                recorder = AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, 16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufferSize)
+                check(recorder.state == AudioRecord.STATE_INITIALIZED) { "麦克风初始化失败" }
+                val chunks = ArrayList<ShortArray>()
+                val started = SystemClock.elapsedRealtime()
+                recorder.startRecording()
+                while (recording && SystemClock.elapsedRealtime() - started < 30000) {
+                    val chunk = ShortArray(1600)
+                    val count = recorder.read(chunk, 0, chunk.size)
+                    if (count > 0) chunks.add(chunk.copyOf(count))
+                }
+                recordMillis = SystemClock.elapsedRealtime() - started
+                val total = chunks.sumOf { it.size }
+                val floats = FloatArray(total)
+                var offset = 0
+                chunks.forEach { chunk -> chunk.forEach { floats[offset++] = it / 32768f } }
+                runOnUiThread {
+                    recordedSamples = floats
+                    status.text = if (total > 0) "录音完成：${recordMillis} ms。现在可切换模型反复识别。" else "录音为空，请重试"
+                    decodeButton.isEnabled = total > 0
+                }
+            } catch (error: Exception) {
+                runOnUiThread { status.text = "录音失败：${error.message}" }
+            } finally {
+                try { recorder?.stop() } catch (_: Exception) { }
+                recorder?.release()
+                recording = false
+                busy = false
+                runOnUiThread { recordButton.text = "重新录制测试语音" }
+            }
+        }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 1) {
-            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) start()
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) startRecording()
             else status.text = "麦克风权限未授予"
         }
     }
 
-    private fun beginListening() {
-        try {
-            resetResult()
-            confirmed = ""
-            firstPartialAt = 0L
-            stopping = false
-            val rec = Recognizer(model ?: return, 16000f)
-            val speech = SpeechService(rec, 16000f)
-            recognizer = rec
-            service = speech
-            startedAt = SystemClock.elapsedRealtime()
-            speech.startListening(object : RecognitionListener {
-                override fun onPartialResult(hypothesis: String) {
-                    val partial = JSONObject(hypothesis).optString("partial")
-                    if (partial.isNotBlank() && firstPartialAt == 0L) firstPartialAt = SystemClock.elapsedRealtime()
-                    result.text = "识别结果：${confirmed + partial}"
+    private fun decode() {
+        if (busy || recordedSamples.isEmpty()) return
+        busy = true
+        val model = selectedModel
+        val audio = recordedSamples
+        decodeButton.isEnabled = false
+        recordButton.isEnabled = false
+        status.text = "正在加载 ${model.label} 并识别…"
+        thread(name = "voice-lab-decode") {
+            try {
+                val output = SpeechModels.decode(assets, model, audio)
+                runOnUiThread {
+                    val expected = reference.text.toString()
+                    val cer = SpeechAccuracy.characterErrorRate(expected, output.text)
+                    result.text = "${model.label}：${output.text}"
+                    metrics.text = "字符错误率：${"%.1f".format(cer * 100)}%\n模型加载：${output.loadMillis} ms\n推理：${output.decodeMillis} ms\n录音：$recordMillis ms"
+                    reports[model] = "${model.label}\n参考：$expected\n识别：${output.text}\nCER：${"%.3f".format(cer)}\n加载：${output.loadMillis} ms；推理：${output.decodeMillis} ms"
+                    status.text = "识别完成。可切换模型比较同一段录音。"
                 }
-                override fun onResult(hypothesis: String) { append(hypothesis) }
-                override fun onFinalResult(hypothesis: String) {
-                    append(hypothesis)
-                    finalText = confirmed
-                    releaseSession()
-                    finishReport()
-                }
-                override fun onError(error: Exception) { releaseSession(); status.text = "识别失败：${error.message}" }
-                override fun onTimeout() { releaseSession(); finishReport() }
-            })
-            recordButton.text = "停止并计算准确率"
-            status.text = "正在识别，请朗读参考文本…"
-        } catch (error: Exception) {
-            releaseSession()
-            status.text = "启动失败：${error.message}"
+            } catch (error: Throwable) {
+                runOnUiThread { status.text = "${model.label} 识别失败：${error.message ?: error.javaClass.simpleName}" }
+            } finally {
+                runOnUiThread { busy = false; decodeButton.isEnabled = true; recordButton.isEnabled = true }
+            }
         }
     }
 
-    private fun append(hypothesis: String) {
-        confirmed += JSONObject(hypothesis).optString("text")
-        result.text = "识别结果：$confirmed"
-    }
-
-    private fun stop() {
-        if (stopping) return
-        stopping = true
-        recordButton.isEnabled = false
-        status.text = "正在结束录音…"
-        val speech = service ?: return
-        thread(name = "voice-lab-stop") { speech.stop() }
-    }
-
-    private fun releaseSession() {
-        service?.shutdown()
-        service = null
-        recognizer?.close()
-        recognizer = null
-        stopping = false
-        recordButton.isEnabled = true
-        recordButton.text = "开始录音识别"
-    }
-
-    private fun finishReport() {
-        val elapsed = SystemClock.elapsedRealtime() - startedAt
-        val first = if (firstPartialAt > 0) firstPartialAt - startedAt else -1L
-        val expected = reference.text.toString()
-        val cer = SpeechAccuracy.characterErrorRate(expected, finalText)
-        metrics.text = "字符错误率：${"%.1f".format(cer * 100)}%\n首字延迟：${if (first >= 0) "$first ms" else "无结果"}\n录音时长：$elapsed ms\n模型首次加载：$loadMillis ms"
-        status.text = "测试完成。请记录识别错误的词句。"
-        report = "参考：$expected\n识别：$finalText\nCER：${"%.3f".format(cer)}\n首字：$first ms\n总时长：$elapsed ms\n首次模型加载：$loadMillis ms\n模型：vosk-model-small-cn-0.22"
+    private fun copyReport() {
+        val text = "HiFairy 三模型测试\n录音：$recordMillis ms\n\n" + reports.values.joinToString("\n\n")
+        (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("三模型语音测试", text))
+        status.text = "报告已复制"
     }
 
     override fun onDestroy() {
-        service?.cancel()
-        releaseSession()
-        model?.close()
+        recording = false
         super.onDestroy()
     }
 }
