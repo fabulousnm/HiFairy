@@ -22,3 +22,7 @@
 ## Android 模拟器结果（2026-11-18）
 
 使用本机 `Medium_Phone_API_37.0` 模拟器无窗口启动，通过 ADB 安装现有 debug APK，安装返回 `Success`，Activity 成功启动且进程持续运行。截图检查页面布局正常。点击麦克风按钮后出现系统授权弹窗，选择允许后 `dumpsys package` 显示 `RECORD_AUDIO: granted=true`。该结果只验证标准 Android 环境，不代表卓易通的音频与性能表现。
+
+## 下一版录音回放验证
+
+已加入开始录音、停止录音和播放录音按钮。录音保存到应用私有缓存，使用 Android `MediaRecorder` 的 AAC/MPEG-4 格式；播放使用 `MediaPlayer`。构建已通过。尚需在 nova 14 卓易通中试听，并确认权限、录音长度和输出音量。
