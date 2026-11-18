@@ -98,8 +98,9 @@ private object ThemeTokens {
     val pressedCardRim = Color(0xFF344363)
     val pressedInset = Color(0xCC030715)
     val drawerVeil = Color(0xFFC8D5FF)
-    val voiceGlow = Color(0xFF4278DA)
-    val voiceCancelGlow = Color(0xFFD96878)
+    val voiceGlow = Color(0xFF173C84)
+    val voiceCancelGlow = Color(0xFF842D43)
+    val voiceShade = Color(0xFF080D24)
 }
 
 private object DrawerMotion {
@@ -545,7 +546,6 @@ class MainActivity : ComponentActivity() {
                                     Text(if (voiceInput.ready) "按住说话" else "正在准备语音…", color = ThemeTokens.text, fontSize = 16.sp, fontWeight = FontWeight.Medium)
                                 }
                             }
-                            if (voiceStatus.isNotBlank() && voiceStatus != "按住说话") Text(voiceStatus, color = ThemeTokens.secondary, fontSize = 11.sp, modifier = Modifier.padding(start = 8.dp, top = 4.dp))
                         } else {
                             Row(Modifier.fillMaxWidth().background(if (editingMessageIndex >= 0) Color(0xFF1C2549) else ThemeTokens.surface, RoundedCornerShape(18.dp)).border(if (editingMessageIndex >= 0) 1.dp else 0.dp, ThemeTokens.accent, RoundedCornerShape(18.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 if (editingMessageIndex >= 0) ActionGlyph("edit", ThemeTokens.accent, Modifier.padding(start = 8.dp))
@@ -654,9 +654,9 @@ class MainActivity : ComponentActivity() {
                 val glow by animateColorAsState(if (voiceCancel) ThemeTokens.voiceCancelGlow else ThemeTokens.voiceGlow, tween(180), label = "voice glow")
                 val level by animateFloatAsState(voiceLevel, tween(100), label = "voice level")
                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(330.dp)
-                    .background(Brush.verticalGradient(listOf(Color.Transparent, glow.copy(alpha = 0.18f), glow.copy(alpha = 0.82f))))) {
+                    .background(Brush.verticalGradient(0f to Color.Transparent, 0.24f to ThemeTokens.voiceShade.copy(alpha = 0.94f), 0.56f to glow.copy(alpha = 0.97f), 1f to glow))) {
                     Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(bottom = 88.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(if (voiceCancel) "松手取消" else "松手发送 · 上滑取消", color = if (voiceCancel) Color(0xFFFFD4D8) else ThemeTokens.text,
+                        Text(if (voiceCancel) "松手取消" else "松手发送 · 上滑取消", color = if (voiceCancel) Color(0xFFFFD8DF) else Color.White,
                             fontSize = 16.sp, fontFamily = TypeTokens.interfaceFont)
                         Spacer(Modifier.height(56.dp))
                         Canvas(Modifier.fillMaxWidth(0.72f).height(32.dp)) {
