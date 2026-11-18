@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -34,6 +35,15 @@ private object ThemeTokens {
     val accent = Color(0xFF8FB4FF)
     val secondary = Color(0xFF9AA4D6)
     val text = Color(0xFFE8F3FF)
+}
+
+private object TypeTokens {
+    val interfaceFont = FontFamily.SansSerif
+    val terminalFont = FontFamily.Monospace
+    val markFont = FontFamily.Serif
+    val eyebrowTracking = 0.22.sp
+    val brandTracking = 0.34.sp
+    val labelTracking = 0.06.sp
 }
 
 class MainActivity : ComponentActivity() {
@@ -57,7 +67,7 @@ class MainActivity : ComponentActivity() {
             Column(Modifier.fillMaxSize().background(ThemeTokens.background).padding(20.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("☰", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { page = "history" })
-                    Text("H.D.D Ⅲ", color = ThemeTokens.text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("H.D.D Ⅲ", color = ThemeTokens.text, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.brandTracking)
                     Text("＋", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { page = "chat"; draft = "" })
                 }
                 when (page) {
@@ -65,8 +75,9 @@ class MainActivity : ComponentActivity() {
                         Column(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                             Image(painterResource(R.drawable.fairy_eye), contentDescription = "Fairy 眼徽", modifier = Modifier.size(154.dp))
                             Spacer(Modifier.height(24.dp))
-                            Text("晚上好，绳匠。", color = ThemeTokens.text, fontSize = 22.sp)
-                            Text("FAIRY // READY", color = ThemeTokens.secondary, fontSize = 12.sp)
+                            Text("晚上好，绳匠。", color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, letterSpacing = TypeTokens.labelTracking)
+                            Spacer(Modifier.height(8.dp))
+                            Text("FAIRY // READY", color = ThemeTokens.secondary, fontSize = 10.sp, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.eyebrowTracking)
                         }
                         Row(Modifier.fillMaxWidth().background(ThemeTokens.surface, RoundedCornerShape(18.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             TextField(value = draft, onValueChange = { draft = it }, placeholder = { Text("向 Fairy 提问…") }, modifier = Modifier.weight(1f), colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent))
@@ -74,13 +85,13 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     "history" -> {
-                        Text("历史对话", color = ThemeTokens.text, fontSize = 24.sp, modifier = Modifier.padding(top = 32.dp))
+                        Text("历史对话", color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, modifier = Modifier.padding(top = 32.dp))
                         Text("新对话", color = ThemeTokens.accent, modifier = Modifier.fillMaxWidth().clickable { page = "chat" }.padding(vertical = 24.dp))
                         Spacer(Modifier.weight(1f))
                         Text("设置  ›", color = ThemeTokens.text, modifier = Modifier.fillMaxWidth().clickable { page = "settings" }.padding(vertical = 20.dp))
                     }
                     else -> {
-                        Text("设置", color = ThemeTokens.text, fontSize = 24.sp, modifier = Modifier.padding(top = 32.dp))
+                        Text("设置", color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, modifier = Modifier.padding(top = 32.dp))
                         Text("语音设备测试", color = ThemeTokens.accent, modifier = Modifier.padding(top = 32.dp))
                         Button(onClick = { requestMicrophone.launch(Manifest.permission.RECORD_AUDIO) }) { Text(if (microphoneGranted) "麦克风已授权" else "授权麦克风") }
                         Text(status, color = ThemeTokens.secondary)

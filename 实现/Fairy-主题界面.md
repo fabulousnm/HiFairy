@@ -3,3 +3,7 @@
 2026-11-18 第一阶段：按 `references/fairy-zzz-plugin/client.js` 的暗色 token 将背景 `#070818`、主文字 `#e8f3ff`、次文字 `#9aa4d6`、强调色 `#8fb4ff` 用于 Android 聊天骨架。眼徽使用参考仓库的 `assets/icon-180.png`。页面包括新对话、历史侧栏入口、设置及语音设备测试入口。
 
 当前只是视觉骨架：眼徽动画、开机视频、居中问好过渡、会话持久化和 DeepSeek 请求尚未实现。输入框目前不发送消息。构建验证已通过；下一步需要模拟器视觉检查和真机主题评审。
+
+## 字体与排版对照
+
+参考仓库在 `client.js` 中声明的主字体顺序为 Bahnschrift、DIN Alternate、HarmonyOS Sans SC、Microsoft YaHei UI、PingFang SC、Noto Sans SC、系统无衬线；代码字使用 Cascadia Code、JetBrains Mono 等等宽字体。仓库没有附带可安装字体文件。Android 版目前将正文映射到系统无衬线、终端标签映射到系统等宽字体，并集中管理字距和字号。当前只是字体类别与排版节奏的近似；要达到逐字形一致，需取得并打包有分发权的字体文件，再在真机上比对。
