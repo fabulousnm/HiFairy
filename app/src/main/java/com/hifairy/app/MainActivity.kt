@@ -31,6 +31,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.TransformOrigin
@@ -49,7 +50,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
@@ -85,8 +89,10 @@ private object ThemeTokens {
     val userBubble = Color(0xFF293765)
     val codeBackground = 0xFF080914.toInt()
     val reasoningBubble = Color(0xFF101B27)
-    val historyCard = Color(0xFF20263E)
-    val activeHistoryCard = Color(0xFF0B1022)
+    val raisedCardTop = Color(0xFF303A5A)
+    val raisedCardBottom = Color(0xFF1B223A)
+    val pressedCardTop = Color(0xFF080C1B)
+    val pressedCardBottom = Color(0xFF121A2D)
     val drawerVeil = Color(0xFFC8D5FF)
 }
 
@@ -231,6 +237,34 @@ private fun SettingsCard(eyebrow: String, title: String, content: @Composable Co
         Text(title, color = ThemeTokens.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
         content()
     }
+}
+
+@Composable
+private fun HistorySessionSurface(selected: Boolean, content: @Composable ColumnScope.() -> Unit) {
+    val shape = RoundedCornerShape(14.dp)
+    val fill = if (selected) Brush.linearGradient(listOf(ThemeTokens.pressedCardTop, ThemeTokens.pressedCardBottom))
+        else Brush.linearGradient(listOf(ThemeTokens.raisedCardTop, ThemeTokens.raisedCardBottom))
+    val rim = if (selected) Brush.linearGradient(listOf(Color(0xFF050817), Color(0xFF536486)))
+        else Brush.linearGradient(listOf(Color(0xFF8393BC), Color(0xFF141A30)))
+    Column(
+        Modifier.fillMaxWidth().padding(bottom = 12.dp)
+            .then(if (selected) Modifier else Modifier.shadow(9.dp, shape, ambientColor = Color(0xCC020410), spotColor = Color(0xFF020410)))
+            .drawWithContent {
+                drawContent()
+                if (selected) {
+                    val inset = 3.dp.toPx()
+                    drawRoundRect(
+                        brush = Brush.linearGradient(listOf(Color(0xE6000410), Color.Transparent, Color(0x887A8EBB))),
+                        topLeft = Offset(inset, inset),
+                        size = Size(size.width - inset * 2, size.height - inset * 2),
+                        cornerRadius = CornerRadius(11.dp.toPx()),
+                        style = Stroke(width = 5.dp.toPx())
+                    )
+                }
+            }
+            .background(fill, shape).border(1.dp, rim, shape).padding(12.dp),
+        content = content
+    )
 }
 
 class MainActivity : ComponentActivity() {
@@ -470,12 +504,12 @@ class MainActivity : ComponentActivity() {
                         Text("＋  新对话", color = ThemeTokens.accent, modifier = Modifier.fillMaxWidth().clickable { newChat() }.padding(vertical = 22.dp))
                         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                             sessions.asReversed().forEach { session ->
-                                Column(Modifier.fillMaxWidth().padding(bottom = 8.dp).background(if (session.id == currentSessionId) ThemeTokens.activeHistoryCard else ThemeTokens.historyCard, RoundedCornerShape(12.dp)).padding(10.dp)) {
+                                HistorySessionSurface(session.id == currentSessionId) {
                                     if (renamingId == session.id) {
                                         TextField(renameDraft, onValueChange = { renameDraft = it.take(50) }, modifier = Modifier.fillMaxWidth(), colors = darkFieldColors())
                                         Text("保存", color = ThemeTokens.accent, modifier = Modifier.clickable { renameSession(session.id, renameDraft); renamingId = 0L }.padding(top = 8.dp))
                                     } else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                        Text(session.title, color = ThemeTokens.text, maxLines = 2, modifier = Modifier.weight(1f).clickable { openSession(session) }.padding(vertical = 8.dp))
+                                        Text(session.title, color = if (session.id == currentSessionId) ThemeTokens.accent else ThemeTokens.text, maxLines = 2, modifier = Modifier.weight(1f).clickable { openSession(session) }.padding(vertical = 8.dp))
                                         Box(Modifier.size(32.dp).clickable(onClickLabel = "会话选项") { historyMenuId = session.id }, contentAlignment = Alignment.Center) {
                                             Canvas(Modifier.size(18.dp)) {
                                                 val dot = 1.6.dp.toPx()
