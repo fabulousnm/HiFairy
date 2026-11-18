@@ -11,21 +11,29 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Button
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 private object ThemeTokens {
-    val background = Color(0xFF080D17)
-    val accent = Color(0xFF73F1EC)
-    val secondary = Color(0xFF9CAABA)
+    val background = Color(0xFF070818)
+    val surface = Color(0xFF11152C)
+    val accent = Color(0xFF8FB4FF)
+    val secondary = Color(0xFF9AA4D6)
+    val text = Color(0xFFE8F3FF)
 }
 
 class MainActivity : ComponentActivity() {
@@ -35,6 +43,8 @@ class MainActivity : ComponentActivity() {
     private var status by mutableStateOf("准备录音")
     private var recorder: MediaRecorder? = null
     private var player: MediaPlayer? = null
+    private var page by mutableStateOf("chat")
+    private var draft by mutableStateOf("")
     private val recordingFile by lazy { File(cacheDir, "voice-check.m4a") }
     private val requestMicrophone = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         microphoneGranted = it
@@ -44,28 +54,39 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         microphoneGranted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         setContent {
-            Column(
-                modifier = Modifier.fillMaxSize().background(ThemeTokens.background).padding(24.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text("H.D.D", color = ThemeTokens.accent, fontSize = 44.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(16.dp))
-                Text("HiFairy 兼容性验证", color = Color.White, fontSize = 22.sp)
-                Spacer(Modifier.height(12.dp))
-                Text("设备安装与麦克风权限", color = ThemeTokens.secondary)
-                Spacer(Modifier.height(24.dp))
-                Button(onClick = { requestMicrophone.launch(Manifest.permission.RECORD_AUDIO) }) {
-                    Text(if (microphoneGranted) "麦克风权限已授予" else "测试麦克风权限")
+            Column(Modifier.fillMaxSize().background(ThemeTokens.background).padding(20.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("☰", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { page = "history" })
+                    Text("H.D.D Ⅲ", color = ThemeTokens.text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("＋", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { page = "chat"; draft = "" })
                 }
-                Spacer(Modifier.height(16.dp))
-                Text(status, color = ThemeTokens.secondary)
-                Spacer(Modifier.height(12.dp))
-                Button(enabled = microphoneGranted, onClick = { if (recording) stopRecording() else startRecording() }) {
-                    Text(if (recording) "停止录音" else "开始录音")
-                }
-                Button(enabled = hasRecording && !recording, onClick = { playRecording() }) {
-                    Text("播放录音")
+                when (page) {
+                    "chat" -> {
+                        Column(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                            Image(painterResource(R.drawable.fairy_eye), contentDescription = "Fairy 眼徽", modifier = Modifier.size(154.dp))
+                            Spacer(Modifier.height(24.dp))
+                            Text("晚上好，绳匠。", color = ThemeTokens.text, fontSize = 22.sp)
+                            Text("FAIRY // READY", color = ThemeTokens.secondary, fontSize = 12.sp)
+                        }
+                        Row(Modifier.fillMaxWidth().background(ThemeTokens.surface, RoundedCornerShape(18.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            TextField(value = draft, onValueChange = { draft = it }, placeholder = { Text("向 Fairy 提问…") }, modifier = Modifier.weight(1f), colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent))
+                            Text("➤", color = ThemeTokens.accent, fontSize = 25.sp)
+                        }
+                    }
+                    "history" -> {
+                        Text("历史对话", color = ThemeTokens.text, fontSize = 24.sp, modifier = Modifier.padding(top = 32.dp))
+                        Text("新对话", color = ThemeTokens.accent, modifier = Modifier.fillMaxWidth().clickable { page = "chat" }.padding(vertical = 24.dp))
+                        Spacer(Modifier.weight(1f))
+                        Text("设置  ›", color = ThemeTokens.text, modifier = Modifier.fillMaxWidth().clickable { page = "settings" }.padding(vertical = 20.dp))
+                    }
+                    else -> {
+                        Text("设置", color = ThemeTokens.text, fontSize = 24.sp, modifier = Modifier.padding(top = 32.dp))
+                        Text("语音设备测试", color = ThemeTokens.accent, modifier = Modifier.padding(top = 32.dp))
+                        Button(onClick = { requestMicrophone.launch(Manifest.permission.RECORD_AUDIO) }) { Text(if (microphoneGranted) "麦克风已授权" else "授权麦克风") }
+                        Text(status, color = ThemeTokens.secondary)
+                        Button(enabled = microphoneGranted, onClick = { if (recording) stopRecording() else startRecording() }) { Text(if (recording) "停止录音" else "开始录音") }
+                        Button(enabled = hasRecording && !recording, onClick = { playRecording() }) { Text("播放录音") }
+                    }
                 }
             }
         }
