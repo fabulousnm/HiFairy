@@ -14,6 +14,7 @@ import android.content.Context
 import android.os.Build
 import android.content.pm.ActivityInfo
 import java.io.File
+import java.time.LocalTime
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.BackHandler
@@ -103,6 +104,12 @@ private object DrawerMotion {
     const val flingVelocity = 650f
     const val damping = 0.57f
     val settle = spring<Float>(dampingRatio = damping, stiffness = Spring.StiffnessMediumLow)
+}
+
+private fun greetingForHour(hour: Int): String = when (hour) {
+    in 5..11 -> "早上好，主人"
+    in 12..17 -> "下午好，主人"
+    else -> "晚上好，主人"
 }
 
 private object TypeTokens {
@@ -274,8 +281,11 @@ class MainActivity : ComponentActivity() {
     private var recorder: MediaRecorder? = null
     private var player: MediaPlayer? = null
     private var page by mutableStateOf("chat")
+    private var settingsFromHistory = false
+    private var chatOpenedFromHistory = false
     private var historyOpen by mutableStateOf(false)
     private var introPhase by mutableStateOf("boot")
+    private var greetingHour by mutableIntStateOf(LocalTime.now().hour)
     private var draft by mutableStateOf("")
     private val messages = mutableStateListOf<ChatMessage>()
     private val sessions = mutableStateListOf<ChatSession>()
@@ -311,7 +321,6 @@ class MainActivity : ComponentActivity() {
         secureSettings = SecureSettings(this)
         chatStore = ChatStore(this)
         sessions.addAll(chatStore.load())
-        sessions.lastOrNull()?.let { messages.addAll(it.messages); currentSessionId = it.id }
         modelDraft = secureSettings.model
         effortDraft = secureSettings.effort
         displayNameDraft = secureSettings.displayName
@@ -326,8 +335,15 @@ class MainActivity : ComponentActivity() {
             var dragStartedOpen by remember { mutableStateOf(false) }
             var draggingDrawer by remember { mutableStateOf(false) }
             var settleVersion by remember { mutableIntStateOf(0) }
-            val closeDrawer = { historyOpen = false; settleVersion++ }
-            BackHandler(historyOpen || draggingDrawer || drawerProgress.value > 0.01f) { closeDrawer() }
+            val closeDrawer = { historyOpen = false; chatOpenedFromHistory = false; settleVersion++ }
+            BackHandler(page == "settings" || historyOpen || draggingDrawer || drawerProgress.value > 0.01f || editingMessageIndex >= 0 || chatOpenedFromHistory) {
+                when {
+                    page == "settings" -> leaveSettings()
+                    historyOpen || draggingDrawer || drawerProgress.value > 0.01f -> closeDrawer()
+                    editingMessageIndex >= 0 -> { editingMessageIndex = -1; draft = "" }
+                    chatOpenedFromHistory -> { chatOpenedFromHistory = false; historyOpen = true }
+                }
+            }
             LaunchedEffect(historyOpen, settleVersion) {
                 val target = if (historyOpen) 1f else 0f
                 drawerProgress.animateTo(target, DrawerMotion.settle)
@@ -401,7 +417,7 @@ class MainActivity : ComponentActivity() {
             }.fillMaxSize().background(ThemeTokens.background).padding(20.dp)) {
                 if (page == "settings") {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text("‹", color = ThemeTokens.accent, fontSize = 34.sp, modifier = Modifier.clickable { page = "chat"; historyOpen = true }.padding(end = 24.dp))
+                        Text("‹", color = ThemeTokens.accent, fontSize = 34.sp, modifier = Modifier.clickable { leaveSettings() }.padding(end = 24.dp))
                         Text("设置", color = ThemeTokens.text, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                     }
                 } else {
@@ -439,7 +455,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             } else {
-                                Text("晚上好，$displayNameDraft。", color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, letterSpacing = TypeTokens.labelTracking, modifier = Modifier.align(Alignment.Center).offset(y = 120.dp))
+                                Text(greetingForHour(greetingHour), color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, letterSpacing = TypeTokens.labelTracking, modifier = Modifier.align(Alignment.Center).offset(y = eyeSize / 2 + 42.dp))
                             }
                         }
                         Row(Modifier.fillMaxWidth().background(if (editingMessageIndex >= 0) Color(0xFF1C2549) else ThemeTokens.surface, RoundedCornerShape(18.dp)).border(if (editingMessageIndex >= 0) 1.dp else 0.dp, ThemeTokens.accent, RoundedCornerShape(18.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -523,7 +539,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
-                        Text("设置  ›", color = ThemeTokens.text, modifier = Modifier.fillMaxWidth().clickable { historyOpen = false; page = "settings" }.padding(vertical = 16.dp))
+                        Text("设置  ›", color = ThemeTokens.text, modifier = Modifier.fillMaxWidth().clickable { settingsFromHistory = true; historyOpen = false; page = "settings" }.padding(vertical = 16.dp))
                     }
                 }
             }
@@ -532,10 +548,21 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        greetingHour = LocalTime.now().hour
+    }
+
+    private fun leaveSettings() {
+        page = "chat"
+        historyOpen = settingsFromHistory
+        settingsFromHistory = false
+    }
+
     private fun sendMessage() {
         val input = draft.trim()
         if (input.isEmpty() || sending) return
-        if (secureSettings.apiKey().isEmpty()) { page = "settings"; status = "请先配置 DeepSeek API Key"; return }
+        if (secureSettings.apiKey().isEmpty()) { settingsFromHistory = false; page = "settings"; status = "请先配置 DeepSeek API Key"; return }
         draft = ""
         if (editingMessageIndex >= 0) {
             val index = editingMessageIndex
@@ -553,7 +580,7 @@ class MainActivity : ComponentActivity() {
     private fun beginGeneration() {
         if (sending) return
         val apiKey = secureSettings.apiKey()
-        if (apiKey.isEmpty()) { page = "settings"; return }
+        if (apiKey.isEmpty()) { settingsFromHistory = false; page = "settings"; return }
         val context = messages.filter { it.content.isNotBlank() && it.content != "已停止生成" && !it.content.startsWith("请求失败：") }
             .map { it.role to it.content }
         val responseIndex = messages.size
@@ -615,6 +642,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun newChat() {
+        chatOpenedFromHistory = historyOpen
         historyOpen = false
         stopGeneration()
         saveCurrentSession()
@@ -626,6 +654,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openSession(session: ChatSession) {
+        chatOpenedFromHistory = true
         historyOpen = false
         stopGeneration()
         saveCurrentSession()
