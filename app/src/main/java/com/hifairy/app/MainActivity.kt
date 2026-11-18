@@ -89,10 +89,11 @@ private object ThemeTokens {
     val userBubble = Color(0xFF293765)
     val codeBackground = 0xFF080914.toInt()
     val reasoningBubble = Color(0xFF101B27)
-    val raisedCardTop = Color(0xFF303A5A)
-    val raisedCardBottom = Color(0xFF1B223A)
-    val pressedCardTop = Color(0xFF080C1B)
-    val pressedCardBottom = Color(0xFF121A2D)
+    val raisedCard = Color(0xFF27314D)
+    val raisedCardRim = Color(0xFF59698E)
+    val pressedCard = Color(0xFF0D1428)
+    val pressedCardRim = Color(0xFF344363)
+    val pressedInset = Color(0xCC030715)
     val drawerVeil = Color(0xFFC8D5FF)
 }
 
@@ -242,10 +243,8 @@ private fun SettingsCard(eyebrow: String, title: String, content: @Composable Co
 @Composable
 private fun HistorySessionSurface(selected: Boolean, content: @Composable ColumnScope.() -> Unit) {
     val shape = RoundedCornerShape(14.dp)
-    val fill = if (selected) Brush.verticalGradient(listOf(ThemeTokens.pressedCardTop, ThemeTokens.pressedCardBottom))
-        else Brush.verticalGradient(listOf(ThemeTokens.raisedCardTop, ThemeTokens.raisedCardBottom))
-    val rim = if (selected) Brush.verticalGradient(listOf(Color(0xFF050817), Color(0xFF536486)))
-        else Brush.verticalGradient(listOf(Color(0xFF8393BC), Color(0xFF141A30)))
+    val fill = if (selected) ThemeTokens.pressedCard else ThemeTokens.raisedCard
+    val rim = if (selected) ThemeTokens.pressedCardRim else ThemeTokens.raisedCardRim
     Column(
         Modifier.fillMaxWidth().padding(bottom = 12.dp)
             .then(if (selected) Modifier else Modifier.shadow(9.dp, shape, ambientColor = Color(0xCC020410), spotColor = Color(0xFF020410)))
@@ -254,7 +253,7 @@ private fun HistorySessionSurface(selected: Boolean, content: @Composable Column
                 if (selected) {
                     val inset = 3.dp.toPx()
                     drawRoundRect(
-                        brush = Brush.verticalGradient(listOf(Color(0xE6000410), Color.Transparent, Color(0x887A8EBB))),
+                        color = ThemeTokens.pressedInset,
                         topLeft = Offset(inset, inset),
                         size = Size(size.width - inset * 2, size.height - inset * 2),
                         cornerRadius = CornerRadius(11.dp.toPx()),
