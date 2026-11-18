@@ -22,6 +22,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.Image
@@ -32,9 +35,6 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.animation.core.*
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Button
 import androidx.compose.material3.TextField
@@ -47,6 +47,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -58,6 +59,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -84,7 +87,7 @@ private object ThemeTokens {
     val reasoningBubble = Color(0xFF101B27)
     val historyCard = Color(0xFF20263E)
     val activeHistoryCard = Color(0xFF0B1022)
-    val drawerVeil = Color(0x33C8D5FF)
+    val drawerVeil = Color(0xFFC8D5FF)
 }
 
 private object TypeTokens {
@@ -274,9 +277,13 @@ class MainActivity : ComponentActivity() {
         avatarChoice = secureSettings.avatar
         microphoneGranted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         setContent {
-            BackHandler(historyOpen) { historyOpen = false }
             val context = LocalContext.current
             val scope = rememberCoroutineScope()
+            val drawerWidthPx = with(LocalDensity.current) { LocalConfiguration.current.screenWidthDp.dp.toPx() * 0.75f }
+            val drawerProgress = remember { Animatable(0f) }
+            val closeDrawer = { historyOpen = false; scope.launch { drawerProgress.animateTo(0f, tween(240)) } }
+            BackHandler(historyOpen || drawerProgress.value > 0.01f) { closeDrawer() }
+            LaunchedEffect(historyOpen) { drawerProgress.animateTo(if (historyOpen) 1f else 0f, tween(360)) }
             val curtain = remember { Animatable(0f) }
             val pulse = rememberInfiniteTransition(label = "eye pulse")
             val eyeScale by pulse.animateFloat(initialValue = 0.97f, targetValue = 1.04f, animationSpec = infiniteRepeatable(tween(1700, easing = EaseInOutSine), RepeatMode.Reverse), label = "eye scale")
@@ -294,10 +301,23 @@ class MainActivity : ComponentActivity() {
                     introPhase = "ready"
                 }
             }
-            BoxWithConstraints(Modifier.fillMaxSize().background(ThemeTokens.background)) {
-            val chatOffset by animateDpAsState(if (historyOpen) maxWidth * 0.75f else 0.dp, tween(360), label = "chat drawer offset")
-            val chatScale by animateFloatAsState(if (historyOpen) 0.96f else 1f, tween(360), label = "chat depth")
-            val chatRotation by animateFloatAsState(if (historyOpen) -5f else 0f, tween(360), label = "chat perspective")
+            BoxWithConstraints(Modifier.fillMaxSize().background(ThemeTokens.background).draggable(
+                state = rememberDraggableState { delta ->
+                    scope.launch { drawerProgress.snapTo((drawerProgress.value + delta / drawerWidthPx).coerceIn(0f, 1f)) }
+                },
+                orientation = Orientation.Horizontal,
+                onDragStarted = { drawerProgress.stop() },
+                onDragStopped = { velocity ->
+                    val open = if (velocity > 700f) true else if (velocity < -700f) false else drawerProgress.value >= 0.5f
+                    drawerProgress.animateTo(if (open) 1f else 0f, tween(240))
+                    historyOpen = open
+                }
+            )) {
+            val drawerWidth = maxWidth * 0.75f
+            val progress = drawerProgress.value
+            val chatOffset = drawerWidth * progress
+            val chatScale = 1f - 0.04f * progress
+            val chatRotation = -5f * progress
             if (introPhase == "boot" || introPhase == "transition") {
                 Box(Modifier.fillMaxSize().background(Color(0xFF02050D))) {
                     AndroidView(
@@ -317,9 +337,9 @@ class MainActivity : ComponentActivity() {
                 rotationY = chatRotation
                 transformOrigin = TransformOrigin(0f, 0.5f)
                 cameraDistance = 24f * density
-                shadowElevation = if (historyOpen) 14.dp.toPx() else 0f
+                shadowElevation = 14.dp.toPx() * progress
                 shape = RoundedCornerShape(20.dp)
-                clip = historyOpen
+                clip = progress > 0f
             }.fillMaxSize().background(ThemeTokens.background).padding(20.dp)) {
                 if (page == "settings") {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -414,10 +434,10 @@ class MainActivity : ComponentActivity() {
             }
             }
             if (introPhase == "ready" || introPhase == "greeting") {
-                if (historyOpen) Box(Modifier.offset(x = chatOffset).fillMaxSize().background(ThemeTokens.drawerVeil).clickable(onClickLabel = "收起历史对话") { historyOpen = false })
-                AnimatedVisibility(visible = historyOpen, enter = slideInHorizontally { -it }, exit = slideOutHorizontally { -it }) {
+                if (progress > 0.001f) Box(Modifier.align(Alignment.CenterEnd).width(maxWidth - chatOffset).fillMaxHeight().background(Brush.horizontalGradient(listOf(Color.Transparent, ThemeTokens.drawerVeil.copy(alpha = 0.32f * progress)))).clickable(onClickLabel = "收起历史对话") { closeDrawer() })
+                if (progress > 0.001f || historyOpen) {
                     val drawerShape = RoundedCornerShape(topEnd = 20.dp, bottomEnd = 20.dp)
-                    Column(Modifier.fillMaxHeight().fillMaxWidth(0.75f).shadow(24.dp, drawerShape).background(ThemeTokens.surface, drawerShape).border(1.dp, Color(0xFF384878), drawerShape).padding(horizontal = 16.dp, vertical = 24.dp)) {
+                    Column(Modifier.offset(x = -drawerWidth * (1f - progress)).fillMaxHeight().width(drawerWidth).shadow(24.dp, drawerShape).background(ThemeTokens.surface, drawerShape).border(1.dp, Color(0xFF384878), drawerShape).padding(horizontal = 16.dp, vertical = 24.dp)) {
                         Text("历史对话", color = ThemeTokens.text, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                         Text("＋  新对话", color = ThemeTokens.accent, modifier = Modifier.fillMaxWidth().clickable { newChat() }.padding(vertical = 22.dp))
                         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
