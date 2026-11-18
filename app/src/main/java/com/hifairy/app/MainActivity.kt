@@ -8,6 +8,9 @@ import android.media.MediaRecorder
 import android.widget.VideoView
 import android.widget.TextView
 import android.graphics.BitmapFactory
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.os.Build
 import android.content.pm.ActivityInfo
 import java.io.File
@@ -64,9 +67,8 @@ private object ThemeTokens {
     val fairyBubble = Color(0xFF161A2A)
     val userBubble = Color(0xFF293765)
     val codeBackground = 0xFF080914.toInt()
+    val reasoningBubble = Color(0xFF101B27)
 }
-
-private data class ChatMessage(val role: String, val content: String)
 
 private object TypeTokens {
     val interfaceFont = FontFamily.SansSerif
@@ -122,15 +124,26 @@ private fun ChatAvatar(role: String, avatar: String, modifier: Modifier = Modifi
 }
 
 @Composable
-private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String) {
+private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String, onCopy: () -> Unit) {
     val isUser = message.role == "user"
+    var reasoningExpanded by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Top) {
         if (!isUser) ChatAvatar("assistant", avatar, Modifier.size(36.dp))
         Column(Modifier.widthIn(max = 300.dp).padding(horizontal = 8.dp), horizontalAlignment = if (isUser) Alignment.End else Alignment.Start) {
             Text(if (isUser) displayName else "Fairy", color = ThemeTokens.secondary, fontSize = 11.sp, fontFamily = TypeTokens.terminalFont, modifier = Modifier.padding(bottom = 5.dp))
-            Box(Modifier.background(if (isUser) ThemeTokens.userBubble else ThemeTokens.fairyBubble, RoundedCornerShape(16.dp)).padding(horizontal = 14.dp, vertical = 11.dp)) {
-                MarkdownMessage(message.content, Modifier.fillMaxWidth())
+            if (!isUser && message.reasoning.isNotEmpty()) {
+                Column(Modifier.fillMaxWidth().background(ThemeTokens.reasoningBubble, RoundedCornerShape(14.dp)).border(1.dp, Color(0xFF294451), RoundedCornerShape(14.dp)).clickable { reasoningExpanded = !reasoningExpanded }.padding(12.dp)) {
+                    Text(if (reasoningExpanded) "思考过程  ⌃" else "思考过程  ›  点击展开", color = ThemeTokens.accent, fontSize = 12.sp)
+                    if (reasoningExpanded) MarkdownMessage(message.reasoning, Modifier.fillMaxWidth().padding(top = 8.dp))
+                }
+                Spacer(Modifier.height(7.dp))
             }
+            if (message.content.isNotBlank() || message.reasoning.isBlank()) {
+                Box(Modifier.background(if (isUser) ThemeTokens.userBubble else ThemeTokens.fairyBubble, RoundedCornerShape(16.dp)).padding(horizontal = 14.dp, vertical = 11.dp)) {
+                    MarkdownMessage(message.content.ifBlank { "正在思考…" }, Modifier.fillMaxWidth())
+                }
+            }
+            if (!isUser && message.content.isNotBlank()) Text("复制回答", color = ThemeTokens.secondary, fontSize = 11.sp, modifier = Modifier.clickable(onClick = onCopy).padding(top = 6.dp))
         }
         if (isUser) ChatAvatar("user", avatar, Modifier.size(36.dp))
     }
@@ -164,7 +177,13 @@ class MainActivity : ComponentActivity() {
     private var introPhase by mutableStateOf("boot")
     private var draft by mutableStateOf("")
     private val messages = mutableStateListOf<ChatMessage>()
-    private val conversation = mutableListOf<Pair<String, String>>()
+    private val sessions = mutableStateListOf<ChatSession>()
+    private var currentSessionId by mutableLongStateOf(0L)
+    private lateinit var chatStore: ChatStore
+    private var activeClient: DeepSeekClient? = null
+    private var requestId = 0L
+    private var renamingId by mutableLongStateOf(0L)
+    private var renameDraft by mutableStateOf("")
     private var sending by mutableStateOf(false)
     private lateinit var secureSettings: SecureSettings
     private var keyDraft by mutableStateOf("")
@@ -187,6 +206,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         secureSettings = SecureSettings(this)
+        chatStore = ChatStore(this)
+        sessions.addAll(chatStore.load())
+        sessions.lastOrNull()?.let { messages.addAll(it.messages); currentSessionId = it.id }
         modelDraft = secureSettings.model
         effortDraft = secureSettings.effort
         displayNameDraft = secureSettings.displayName
@@ -236,7 +258,7 @@ class MainActivity : ComponentActivity() {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("☰", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { page = "history" })
                         Text("H.D.D Ⅲ", color = ThemeTokens.text, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.brandTracking)
-                        Text("＋", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { page = "chat"; draft = ""; messages.clear(); conversation.clear() })
+                        Text("＋", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { newChat() })
                     }
                 }
                 when (page) {
@@ -251,8 +273,17 @@ class MainActivity : ComponentActivity() {
                                 Text("FAIRY // ONLINE", color = ThemeTokens.accent, fontSize = 10.sp, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.eyebrowTracking, modifier = Modifier.offset(70.dp, 46.dp))
                                 val scrollState = rememberScrollState()
                                 LaunchedEffect(messages.size) { scrollState.animateScrollTo(scrollState.maxValue) }
+                                LaunchedEffect(messages.lastOrNull()) {
+                                    if (!scrollState.isScrollInProgress && scrollState.maxValue - scrollState.value < 120) scrollState.scrollTo(scrollState.maxValue)
+                                }
                                 Column(Modifier.fillMaxSize().padding(top = 94.dp).verticalScroll(scrollState).padding(bottom = 16.dp)) {
-                                    messages.forEach { message -> ChatBubble(message, displayNameDraft, avatarChoice) }
+                                    messages.forEachIndexed { index, message ->
+                                        key(currentSessionId, index) {
+                                            ChatBubble(message, displayNameDraft, avatarChoice) {
+                                                (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Fairy 回答", message.content))
+                                            }
+                                        }
+                                    }
                                 }
                             } else {
                                 Text("晚上好，$displayNameDraft。", color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, letterSpacing = TypeTokens.labelTracking, modifier = Modifier.align(Alignment.Center).offset(y = 120.dp))
@@ -260,13 +291,27 @@ class MainActivity : ComponentActivity() {
                         }
                         Row(Modifier.fillMaxWidth().background(ThemeTokens.surface, RoundedCornerShape(18.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             TextField(value = draft, onValueChange = { draft = it }, placeholder = { Text("向 Fairy 提问…", color = ThemeTokens.secondary) }, modifier = Modifier.weight(1f), colors = TextFieldDefaults.colors(focusedTextColor = ThemeTokens.text, unfocusedTextColor = ThemeTokens.text, cursorColor = ThemeTokens.accent, focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
-                            Text("➤", color = ThemeTokens.accent, fontSize = 25.sp, modifier = Modifier.clickable { sendMessage() })
+                            Text(if (sending) "■" else "➤", color = ThemeTokens.accent, fontSize = 25.sp, modifier = Modifier.clickable { if (sending) stopGeneration() else sendMessage() })
                         }
+                        if (messages.lastOrNull()?.role == "assistant" && !sending) Text("重新生成回答", color = ThemeTokens.secondary, fontSize = 11.sp, modifier = Modifier.align(Alignment.End).clickable { regenerate() }.padding(top = 6.dp))
                     }
                     "history" -> {
                         Text("历史对话", color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, modifier = Modifier.padding(top = 32.dp))
-                        Text("新对话", color = ThemeTokens.accent, modifier = Modifier.fillMaxWidth().clickable { page = "chat"; messages.clear(); conversation.clear() }.padding(vertical = 24.dp))
-                        Spacer(Modifier.weight(1f))
+                        Text("＋  新对话", color = ThemeTokens.accent, modifier = Modifier.fillMaxWidth().clickable { newChat() }.padding(vertical = 24.dp))
+                        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                            sessions.asReversed().forEach { session ->
+                                Column(Modifier.fillMaxWidth().padding(bottom = 8.dp).background(ThemeTokens.surface, RoundedCornerShape(14.dp)).padding(12.dp)) {
+                                    if (renamingId == session.id) {
+                                        TextField(renameDraft, onValueChange = { renameDraft = it.take(50) }, modifier = Modifier.fillMaxWidth(), colors = darkFieldColors())
+                                        Text("保存", color = ThemeTokens.accent, modifier = Modifier.clickable { renameSession(session.id, renameDraft); renamingId = 0L }.padding(top = 8.dp))
+                                    } else Text(session.title, color = ThemeTokens.text, modifier = Modifier.fillMaxWidth().clickable { openSession(session) }.padding(vertical = 8.dp))
+                                    Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                                        Text("重命名", color = ThemeTokens.secondary, fontSize = 12.sp, modifier = Modifier.clickable { renamingId = session.id; renameDraft = session.title })
+                                        Text("删除", color = ThemeTokens.secondary, fontSize = 12.sp, modifier = Modifier.clickable { deleteSession(session.id) })
+                                    }
+                                }
+                            }
+                        }
                         Text("设置  ›", color = ThemeTokens.text, modifier = Modifier.fillMaxWidth().clickable { page = "settings" }.padding(vertical = 20.dp))
                     }
                     else -> {
@@ -319,27 +364,118 @@ class MainActivity : ComponentActivity() {
     private fun sendMessage() {
         val input = draft.trim()
         if (input.isEmpty() || sending) return
-        val apiKey = secureSettings.apiKey()
-        if (apiKey.isEmpty()) { page = "settings"; status = "请先配置 DeepSeek API Key"; return }
+        if (secureSettings.apiKey().isEmpty()) { page = "settings"; status = "请先配置 DeepSeek API Key"; return }
         draft = ""
         messages.add(ChatMessage("user", input))
-        conversation.add("user" to input)
+        if (currentSessionId == 0L) currentSessionId = System.currentTimeMillis()
+        saveCurrentSession()
+        beginGeneration()
+    }
+
+    private fun beginGeneration() {
+        if (sending) return
+        val apiKey = secureSettings.apiKey()
+        if (apiKey.isEmpty()) { page = "settings"; return }
+        val context = messages.filter { it.content.isNotBlank() && it.content != "已停止生成" && !it.content.startsWith("请求失败：") }
+            .map { it.role to it.content }
         val responseIndex = messages.size
-        messages.add(ChatMessage("assistant", "正在思考…"))
+        messages.add(ChatMessage("assistant", ""))
         sending = true
-        val context = conversation.toList()
+        val id = ++requestId
+        val client = DeepSeekClient()
+        activeClient = client
         Thread {
             val answer = StringBuilder()
+            val reasoning = StringBuilder()
             try {
-                DeepSeekClient().stream(apiKey, secureSettings.model, secureSettings.effort, context) { token ->
+                client.stream(apiKey, secureSettings.model, secureSettings.effort, context, { token ->
                     answer.append(token)
-                    runOnUiThread { messages[responseIndex] = ChatMessage("assistant", answer.toString()) }
+                    val snapshot = answer.toString()
+                    runOnUiThread { if (id == requestId && responseIndex < messages.size) messages[responseIndex] = ChatMessage("assistant", snapshot, reasoning.toString()) }
+                }, { token ->
+                    reasoning.append(token)
+                    val snapshot = reasoning.toString()
+                    runOnUiThread { if (id == requestId && responseIndex < messages.size) messages[responseIndex] = ChatMessage("assistant", answer.toString(), snapshot) }
+                })
+                runOnUiThread {
+                    if (id == requestId) {
+                        messages[responseIndex] = ChatMessage("assistant", answer.toString().ifBlank { "未收到回答" }, reasoning.toString())
+                        sending = false
+                        activeClient = null
+                        saveCurrentSession()
+                    }
                 }
-                runOnUiThread { conversation.add("assistant" to answer.toString()); sending = false }
             } catch (e: Exception) {
-                runOnUiThread { messages[responseIndex] = ChatMessage("assistant", "请求失败：${e.message}"); sending = false }
+                runOnUiThread { if (id == requestId) {
+                    messages[responseIndex] = ChatMessage("assistant", "请求失败：${e.message}", reasoning.toString())
+                    sending = false
+                    activeClient = null
+                    saveCurrentSession()
+                } }
             }
         }.start()
+    }
+
+    private fun stopGeneration() {
+        if (!sending) return
+        requestId++
+        activeClient?.cancel()
+        activeClient = null
+        sending = false
+        val index = messages.lastIndex
+        if (index >= 0 && messages[index].role == "assistant" && messages[index].content.isBlank()) {
+            messages[index] = messages[index].copy(content = "已停止生成")
+        }
+        saveCurrentSession()
+    }
+
+    private fun regenerate() {
+        if (sending || messages.lastOrNull()?.role != "assistant") return
+        messages.removeAt(messages.lastIndex)
+        saveCurrentSession()
+        beginGeneration()
+    }
+
+    private fun newChat() {
+        stopGeneration()
+        saveCurrentSession()
+        messages.clear()
+        currentSessionId = 0L
+        draft = ""
+        page = "chat"
+    }
+
+    private fun openSession(session: ChatSession) {
+        stopGeneration()
+        saveCurrentSession()
+        messages.clear()
+        messages.addAll(session.messages)
+        currentSessionId = session.id
+        page = "chat"
+    }
+
+    private fun saveCurrentSession() {
+        if (currentSessionId == 0L || messages.isEmpty()) return
+        val title = sessions.firstOrNull { it.id == currentSessionId }?.title
+            ?: messages.firstOrNull { it.role == "user" }?.content?.take(28).orEmpty()
+        val updated = ChatSession(currentSessionId, title, messages.toList())
+        val index = sessions.indexOfFirst { it.id == currentSessionId }
+        if (index >= 0) sessions[index] = updated else sessions.add(updated)
+        chatStore.save(sessions)
+    }
+
+    private fun renameSession(id: Long, title: String) {
+        val index = sessions.indexOfFirst { it.id == id }
+        if (index >= 0 && title.isNotBlank()) {
+            sessions[index] = sessions[index].copy(title = title.trim())
+            chatStore.save(sessions)
+        }
+    }
+
+    private fun deleteSession(id: Long) {
+        if (currentSessionId == id) { stopGeneration(); messages.clear(); currentSessionId = 0L }
+        sessions.removeAll { it.id == id }
+        chatStore.save(sessions)
     }
 
     private fun startRecording() {
@@ -395,6 +531,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        activeClient?.cancel()
         recorder?.release()
         player?.release()
         super.onDestroy()
