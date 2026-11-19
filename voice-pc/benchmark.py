@@ -17,6 +17,7 @@ def parse_args():
     parser.add_argument("--text", default="主人，语音模块已就绪。今天有什么任务需要本系统处理？")
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--text-split-method", choices=("cut0", "cut3", "cut5"), default="cut0")
+    parser.add_argument("--text-lang", choices=("all_zh", "zh", "en"), help="Override automatic Chinese/English selection")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "output")
     return parser.parse_args()
 
@@ -35,7 +36,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     runs = []
     for index in range(args.repeats):
-        request = build_request(args.text, args.text_split_method)
+        request = build_request(args.text, args.text_split_method, args.text_lang)
         begin = perf_counter()
         first_ms = None
         chunks = []
@@ -74,6 +75,7 @@ def main():
         "peak_allocated_vram_mb": round(torch.cuda.max_memory_allocated() / 1024**2),
         "text": args.text,
         "text_split_method": args.text_split_method,
+        "text_lang": args.text_lang or build_request(args.text)["text_lang"],
         "runs": runs,
     }
     (output_dir / "metrics.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")

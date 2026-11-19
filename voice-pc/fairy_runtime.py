@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+import re
 import sys
 from time import perf_counter
 
@@ -63,10 +64,20 @@ def load_pipeline():
     return pipeline, round((perf_counter() - start) * 1000)
 
 
-def build_request(text: str, text_split_method: str = "cut5") -> dict:
+def choose_text_language(text: str) -> str:
+    has_chinese = bool(re.search(r"[\u4e00-\u9fff]", text))
+    has_english = bool(re.search(r"[A-Za-z]", text))
+    if has_chinese and has_english:
+        return "zh"  # Mixed-language segmentation keeps English words intact.
+    if has_english:
+        return "en"
+    return "all_zh"
+
+
+def build_request(text: str, text_split_method: str = "cut5", text_lang: str | None = None) -> dict:
     return {
         "text": text,
-        "text_lang": "all_zh",
+        "text_lang": text_lang or choose_text_language(text),
         "ref_audio_path": str(REFERENCE_WAV),
         "prompt_text": REFERENCE_TEXT,
         "prompt_lang": "all_zh",
