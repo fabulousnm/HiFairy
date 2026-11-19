@@ -44,16 +44,12 @@ class ZipVoiceBenchmark(private val assets: AssetManager) {
             numSteps = 4
         )
         val start = SystemClock.elapsedRealtime()
-        var firstChunk: Long? = null
-        val result = tts.generateWithConfigAndCallback(text, options) { samples ->
-            if (samples.isNotEmpty()) {
-                if (firstChunk == null) firstChunk = SystemClock.elapsedRealtime() - start
-            }
-            0
-        }
+        // This sherpa JNI build invokes the callback with a Float, while the
+        // bundled Kotlin API expects FloatArray. The mismatch aborts ART.
+        val result = tts.generateWithConfig(text, options)
         val elapsed = SystemClock.elapsedRealtime() - start
         require(result.sampleRate > 0 && result.samples.isNotEmpty()) { "模型未生成音频" }
-        return SynthesisOutput(SynthesisMetrics(firstChunk, elapsed, result.samples.size * 1000L / result.sampleRate, result.sampleRate), result.samples)
+        return SynthesisOutput(SynthesisMetrics(null, elapsed, result.samples.size * 1000L / result.sampleRate, result.sampleRate), result.samples)
     }
 
     fun close() { engine?.release(); engine = null }

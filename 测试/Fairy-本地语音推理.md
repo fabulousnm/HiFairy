@@ -6,7 +6,7 @@
 
 打开测试包后等待模型加载，记录加载时间。保留默认短句，连续点击「离线生成并播放」三次，再输入较长中文句子测试。界面显示：
 
-- 首块生成：从发起合成到模型首次返回音频块；不是扬声器实际出声时间。
+- 首块生成：原版用于测从发起合成到首次返回音频块；0.2.1 因暂时停用不兼容的 JNI 回调，界面显示“无”。
 - 完整推理：模型生成整段音频的耗时，不含播放器写入和播放等待。
 - 音频长度与 RTF：RTF = 完整推理耗时 ÷ 音频长度；小于 1 才可能达到实时生成。
 
@@ -18,4 +18,6 @@
 
 2026-11-19 用户反馈 nova 14 上启动本地推理时闪退。HDC 已连接手机并在复现时从 Harmony hilog 捕获到 `ANCO DIED:pid=49012,pName=com.hifairy.ttslab`，确认卓易通内测试进程退出；该日志没有 Android 异常栈或具体原因，不能据此判断是内存不足、模型原生崩溃还是播放错误。ADB 仍不显示该设备，因为目前暴露的是 HDC Interface。
 
-已制作诊断版测试包：界面显示上次执行阶段、Android `ApplicationExitInfo` 退出原因及可读的原生跟踪摘要。阶段在模型加载、推理、生成完成、播放和正常完成前后同步写入。安装 `tts-lab/build/outputs/apk/debug/tts-lab-debug.apk` 后，复现闪退并再次打开应用，拍摄或抄录状态下面的诊断文字。当前包的 SHA-256 为 `F20C3A78310347F63D77F1E0DD62EAB85C264FD89037C1174125B7D4FC5B5011`。尚未取得诊断结果；手机端推理暂未验证通过。对手机端与电脑端的可行性比较见《../调研/2026-11-19-Fairy-语音推理部署比较.md》。
+诊断版测试包显示上次执行阶段、Android `ApplicationExitInfo` 退出原因及可读的原生跟踪摘要。用户复现并重启后截图确认：模型加载约 4494 ms；上次阶段为 `generating`；系统退出为原生崩溃、状态 6（`SIGABRT`）；原生跟踪明确指出 `NoSuchMethodError`，JNI 在 `generateWithConfigImpl` 回调过程中试图调用测试包 lambda 的 `invoke(F)Ljava/lang/Integer;`，与 Kotlin 侧回调签名不匹配。由此不能推断手机算力或内存不足。
+
+修复版 0.2.1 改用 sherpa 官方 `generateWithConfig` 无回调接口，避免该 JNI/Kotlin 回调不匹配；仍测完整推理时间、音频长度及 RTF，首块时间显示“无”。已构建成功，待真机安装复测，手机端推理性能和音色仍未验证。APK 路径仍为 `tts-lab/build/outputs/apk/debug/tts-lab-debug.apk`。对手机端与电脑端的可行性比较见《../调研/2026-11-19-Fairy-语音推理部署比较.md》。
