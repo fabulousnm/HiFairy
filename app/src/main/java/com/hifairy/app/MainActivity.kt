@@ -269,7 +269,11 @@ private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String
                 MessageAction("copy", "复制回答", onCopy)
                 MessageAction(if (playing) "mute" else "speaker", if (playing) "停止播放" else "重听回答", onReplay, if (playing) ThemeTokens.accent else ThemeTokens.secondary)
                 if (showRegenerate) MessageAction("retry", "重新生成回答", onRegenerate)
-                if (showContinue) MessageAction("continue", "继续生成回答", onContinue)
+                if (showContinue) Row(Modifier.clickable(onClickLabel = "继续生成回答", onClick = onContinue).padding(horizontal = 6.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                    ActionGlyph("continue", ThemeTokens.accent)
+                    Spacer(Modifier.width(4.dp))
+                    Text("继续生成", color = ThemeTokens.accent, fontSize = 11.sp)
+                }
             }
             if (isUser && showEdit) MessageAction("edit", "编辑并重新发送", onEdit)
         }
@@ -390,6 +394,36 @@ class MainActivity : ComponentActivity() {
             avatarChoice = "custom"
             secureSettings.avatar = "custom"
         } catch (_: Exception) { status = "头像读取失败" }
+    }
+    private val exportChats = registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) try {
+            saveCurrentSession()
+            contentResolver.openOutputStream(uri)?.use { it.write(chatStore.exportJson(sessions).toByteArray(Charsets.UTF_8)) }
+                ?: error("无法写入备份文件")
+            Toast.makeText(this, "会话已导出", Toast.LENGTH_SHORT).show()
+        } catch (error: Exception) { Toast.makeText(this, "导出失败：${error.message}", Toast.LENGTH_LONG).show() }
+    }
+    private val importChats = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) try {
+            val bytes = contentResolver.openInputStream(uri)?.use { input ->
+                val buffer = java.io.ByteArrayOutputStream()
+                val chunk = ByteArray(8192)
+                while (true) {
+                    val count = input.read(chunk)
+                    if (count < 0) break
+                    if (buffer.size() + count > 50 * 1024 * 1024) error("备份文件超过 50 MB")
+                    buffer.write(chunk, 0, count)
+                }
+                buffer.toByteArray()
+            } ?: error("无法读取备份文件")
+            saveCurrentSession()
+            val merged = chatStore.mergeImport(sessions, String(bytes, Charsets.UTF_8))
+            val added = merged.size - sessions.size
+            chatStore.save(merged)
+            sessions.clear()
+            sessions.addAll(merged)
+            Toast.makeText(this, "已导入 $added 条会话", Toast.LENGTH_SHORT).show()
+        } catch (error: Exception) { Toast.makeText(this, "导入失败：${error.message}", Toast.LENGTH_LONG).show() }
     }
     private val requestMicrophone = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
         microphoneGranted = it
@@ -731,6 +765,13 @@ class MainActivity : ComponentActivity() {
                                 }) { Text("保存语音配置") }
                                 Text("自动播放可在聊天页右上角切换；回答下方的音响按钮可随时重听。", color = ThemeTokens.secondary, fontSize = 12.sp)
                             }
+                            SettingsCard("DATA // ARCHIVE", "会话备份") {
+                                Text("将本机历史保存为 JSON，或从备份合并导入。API Key 与语音令牌不会导出。", color = ThemeTokens.secondary, fontSize = 12.sp)
+                                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Button(onClick = { exportChats.launch("HiFairy-conversations.json") }) { Text("导出会话") }
+                                    Button(onClick = { importChats.launch(arrayOf("application/json", "text/plain")) }) { Text("导入会话") }
+                                }
+                            }
                         }
                     }
                 }
@@ -891,7 +932,7 @@ class MainActivity : ComponentActivity() {
                     if (id == requestId) {
                         messages[responseIndex] = previous.copy(content = answer.toString().ifBlank { "未收到回答" }, reasoning = reasoning.toString(),
                             citations = result.citations.ifEmpty { previous.citations }, serverToolCalls = result.serverToolCalls,
-                            canContinue = result.finishReason == "length" && !generationWebSearch && result.serverToolCalls == "[]")
+                            canContinue = result.finishReason == "length", continueAsFollowUp = result.serverToolCalls != "[]")
                         sending = false
                         activeClient = null
                         saveCurrentSession()
@@ -921,7 +962,7 @@ class MainActivity : ComponentActivity() {
         if (index >= 0 && messages[index].role == "assistant") {
             val message = messages[index]
             messages[index] = if (message.content.isBlank()) message.copy(content = "已停止生成")
-                else message.copy(canContinue = !generationWebSearch)
+                else message.copy(canContinue = true, continueAsFollowUp = generationWebSearch)
         }
         saveCurrentSession()
     }
@@ -935,8 +976,15 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun continueAnswer() {
-        if (sending || messages.lastOrNull()?.role != "assistant" || messages.lastOrNull()?.canContinue != true) return
-        beginGeneration(continuing = true)
+        val latest = messages.lastOrNull() ?: return
+        if (sending || latest.role != "assistant" || latest.content.isBlank()) return
+        if (!latest.canContinue) return
+        if (!latest.continueAsFollowUp) beginGeneration(continuing = true)
+        else {
+            messages.add(ChatMessage("user", "请接着上一条回答继续，不要重复已讲过的内容。"))
+            saveCurrentSession()
+            beginGeneration()
+        }
     }
 
     private fun newChat() {
