@@ -265,9 +265,9 @@ private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String
                         }.padding(vertical = 4.dp))
                 }
             }
-            if (!isUser && message.content.isNotBlank()) Row(verticalAlignment = Alignment.CenterVertically) {
-                MessageAction("copy", "复制回答", onCopy)
-                MessageAction(if (playing) "mute" else "speaker", if (playing) "停止播放" else "重听回答", onReplay, if (playing) ThemeTokens.accent else ThemeTokens.secondary)
+            if (!isUser && (message.content.isNotBlank() || showContinue)) Row(verticalAlignment = Alignment.CenterVertically) {
+                if (message.content.isNotBlank()) MessageAction("copy", "复制回答", onCopy)
+                if (message.content.isNotBlank()) MessageAction(if (playing) "mute" else "speaker", if (playing) "停止播放" else "重听回答", onReplay, if (playing) ThemeTokens.accent else ThemeTokens.secondary)
                 if (showRegenerate) MessageAction("retry", "重新生成回答", onRegenerate)
                 if (showContinue) Row(Modifier.clickable(onClickLabel = "继续生成回答", onClick = onContinue).padding(horizontal = 6.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
                     ActionGlyph("continue", ThemeTokens.accent)
@@ -360,6 +360,8 @@ class MainActivity : ComponentActivity() {
     private val editingAttachments = mutableStateListOf<ChatAttachment>()
     private var sending by mutableStateOf(false)
     private var generationWebSearch = false
+    private var generationPaused by mutableStateOf(false)
+    private var bufferedMessage: ChatMessage? = null
     private var webSearch by mutableStateOf(false)
     private val pendingAttachments = mutableStateListOf<PendingAttachment>()
     private val pickAttachments = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -450,7 +452,6 @@ class MainActivity : ComponentActivity() {
         }
         voiceInput = ParaformerVoiceInput(this, { voiceStatus = it }, { voiceLevel = it }, { transcript ->
             val previousDraft = draft
-            if (sending) stopGeneration()
             draft = transcript
             sendMessage()
             if (draft.isEmpty()) draft = previousDraft
@@ -609,8 +610,8 @@ class MainActivity : ComponentActivity() {
                                     messages.forEachIndexed { index, message ->
                                         key(currentSessionId, index) {
                                             ChatBubble(message, displayNameDraft, avatarChoice,
-                                                showRegenerate = index == messages.lastIndex && !sending,
-                                                showContinue = index == messages.lastIndex && message.canContinue && !sending,
+                                                showRegenerate = index == messages.lastIndex && !sending && !generationPaused,
+                                                showContinue = index == messages.lastIndex && (generationPaused || message.canContinue) && !message.content.startsWith("请求失败："),
                                                 showEdit = index == messages.indexOfLast { it.role == "user" } && !sending,
                                                 playing = playingSessionId == currentSessionId && playingMessageIndex == index,
                                                 onCopy = { (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Fairy 回答", message.content)) },
@@ -689,7 +690,9 @@ class MainActivity : ComponentActivity() {
                                 if (editingMessageIndex < 0) MessageAction("mic", "切换语音输入", { voiceMode = true; if (microphoneGranted) voiceInput.prepare() else requestMicrophone.launch(Manifest.permission.RECORD_AUDIO) }, ThemeTokens.accent)
                                 TextField(value = draft, onValueChange = { draft = it }, placeholder = { Text("向 Fairy 提问…", color = ThemeTokens.secondary) }, modifier = Modifier.weight(1f), colors = TextFieldDefaults.colors(focusedTextColor = ThemeTokens.text, unfocusedTextColor = ThemeTokens.text, cursorColor = ThemeTokens.accent, focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
                                 if (editingMessageIndex >= 0) MessageAction("cancel", "取消编辑", { editingMessageIndex = -1; editingAttachments.clear(); draft = "" }, ThemeTokens.text)
-                                Text(if (sending) "■" else "➤", color = ThemeTokens.accent, fontSize = 25.sp, modifier = Modifier.clickable { if (sending) stopGeneration() else sendMessage() })
+                                val hasOutgoing = draft.isNotBlank() || pendingAttachments.isNotEmpty() || editingAttachments.isNotEmpty()
+                                Text(if (sending && !generationPaused && !hasOutgoing) "■" else "➤", color = ThemeTokens.accent, fontSize = 25.sp,
+                                    modifier = Modifier.clickable { if (hasOutgoing) sendMessage() else if (sending && !generationPaused) pauseGeneration() })
                             }
                             }
                         }
@@ -880,10 +883,11 @@ class MainActivity : ComponentActivity() {
 
     private fun sendMessage() {
         val input = draft.trim()
-        if ((input.isEmpty() && pendingAttachments.isEmpty() && editingAttachments.isEmpty()) || sending) return
+        if (input.isEmpty() && pendingAttachments.isEmpty() && editingAttachments.isEmpty()) return
         if (pendingAttachments.any { it.fileId.isBlank() }) { Toast.makeText(this, "请等待附件上传完成，失败的附件可移除后重选", Toast.LENGTH_LONG).show(); return }
         if ((webSearch || pendingAttachments.isNotEmpty() || editingAttachments.isNotEmpty()) && secureSettings.model != "deepseek-flash") { Toast.makeText(this, "绳网和附件需在设置中选择 deepseek-flash 模型", Toast.LENGTH_LONG).show(); return }
         if (secureSettings.apiKey().isEmpty()) { settingsFromHistory = false; page = "settings"; status = "请先配置 DeepSeek API Key"; return }
+        if (sending || generationPaused) discardPreviousGeneration()
         draft = ""
         if (editingMessageIndex >= 0) {
             val index = editingMessageIndex
@@ -903,6 +907,8 @@ class MainActivity : ComponentActivity() {
     private fun beginGeneration(continuing: Boolean = false) {
         if (sending) return
         stopSpeech()
+        generationPaused = false
+        bufferedMessage = null
         val apiKey = secureSettings.apiKey()
         if (apiKey.isEmpty()) { settingsFromHistory = false; page = "settings"; return }
         val context = messages.filter { it.content.isNotBlank() && it.content != "已停止生成" && !it.content.startsWith("请求失败：") }
@@ -922,48 +928,95 @@ class MainActivity : ComponentActivity() {
                 val result = client.stream(apiKey, secureSettings.model, secureSettings.effort, context, generationWebSearch, continuing, { token ->
                     answer.append(token)
                     val snapshot = answer.toString()
-                    runOnUiThread { if (id == requestId && responseIndex < messages.size) messages[responseIndex] = previous.copy(content = snapshot, reasoning = reasoning.toString(), canContinue = false) }
+                    val thought = reasoning.toString()
+                    runOnUiThread { if (id == requestId && responseIndex < messages.size) {
+                        val update = previous.copy(content = snapshot, reasoning = thought, canContinue = false)
+                        if (generationPaused) bufferedMessage = update else messages[responseIndex] = update
+                    } }
                 }, { token ->
                     reasoning.append(token)
                     val snapshot = reasoning.toString()
-                    runOnUiThread { if (id == requestId && responseIndex < messages.size) messages[responseIndex] = previous.copy(content = answer.toString(), reasoning = snapshot, canContinue = false) }
+                    val text = answer.toString()
+                    runOnUiThread { if (id == requestId && responseIndex < messages.size) {
+                        val update = previous.copy(content = text, reasoning = snapshot, canContinue = false)
+                        if (generationPaused) bufferedMessage = update else messages[responseIndex] = update
+                    } }
                 })
                 runOnUiThread {
                     if (id == requestId) {
-                        messages[responseIndex] = previous.copy(content = answer.toString().ifBlank { "未收到回答" }, reasoning = reasoning.toString(),
+                        val complete = previous.copy(content = answer.toString().ifBlank { "未收到回答" }, reasoning = reasoning.toString(),
                             citations = result.citations.ifEmpty { previous.citations }, serverToolCalls = result.serverToolCalls,
-                            canContinue = result.finishReason == "length", continueAsFollowUp = result.serverToolCalls != "[]")
+                            canContinue = result.finishReason == "length" && result.serverToolCalls == "[]")
+                        if (generationPaused) bufferedMessage = complete else messages[responseIndex] = complete
                         sending = false
                         activeClient = null
-                        saveCurrentSession()
-                        if (voiceAutoPlay && answer.isNotBlank()) playAnswer(responseIndex)
+                        if (!generationPaused) {
+                            saveCurrentSession()
+                            if (voiceAutoPlay && answer.isNotBlank()) playAnswer(responseIndex)
+                        }
                     }
                 }
             } catch (e: Exception) {
                 runOnUiThread { if (id == requestId) {
-                    messages[responseIndex] = if (continuing) previous.copy(content = answer.toString(), reasoning = reasoning.toString(), canContinue = true)
+                    val failed = if (continuing) previous.copy(content = answer.toString(), reasoning = reasoning.toString(), canContinue = true)
                         else previous.copy(content = "请求失败：${e.message}", reasoning = reasoning.toString())
-                    if (continuing) Toast.makeText(this, "续答失败：${e.message}", Toast.LENGTH_LONG).show()
+                    if (generationPaused) bufferedMessage = failed else messages[responseIndex] = failed
+                    if (continuing && !generationPaused) Toast.makeText(this, "续答失败：${e.message}", Toast.LENGTH_LONG).show()
                     sending = false
                     activeClient = null
-                    saveCurrentSession()
+                    if (!generationPaused) saveCurrentSession()
                 } }
             }
         }.start()
     }
 
+    private fun pauseGeneration() {
+        if (!sending || generationPaused) return
+        generationPaused = true
+        val index = messages.lastIndex
+        if (index >= 0 && messages[index].role == "assistant") messages[index] = messages[index].copy(canContinue = true)
+    }
+
+    private fun resumeGeneration() {
+        if (!generationPaused) return
+        generationPaused = false
+        val index = messages.lastIndex
+        bufferedMessage?.let { if (index >= 0 && messages[index].role == "assistant") messages[index] = it }
+        bufferedMessage = null
+        if (!sending) {
+            saveCurrentSession()
+            if (voiceAutoPlay && index >= 0 && messages[index].role == "assistant" && messages[index].content.isNotBlank()) playAnswer(index)
+        }
+    }
+
+    private fun discardPreviousGeneration() {
+        requestId++
+        activeClient?.cancel()
+        activeClient = null
+        sending = false
+        generationPaused = false
+        bufferedMessage = null
+        val index = messages.lastIndex
+        if (index >= 0 && messages[index].role == "assistant") {
+            if (messages[index].content.isBlank() && messages[index].reasoning.isBlank()) messages.removeAt(index)
+            else messages[index] = messages[index].copy(canContinue = false)
+        }
+    }
+
     private fun stopGeneration() {
-        if (!sending) return
+        if (!sending && !generationPaused) return
         requestId++
         activeClient?.cancel()
         activeClient = null
         sending = false
         val index = messages.lastIndex
         if (index >= 0 && messages[index].role == "assistant") {
-            val message = messages[index]
-            messages[index] = if (message.content.isBlank()) message.copy(content = "已停止生成")
-                else message.copy(canContinue = true, continueAsFollowUp = generationWebSearch)
+            val message = bufferedMessage ?: messages[index]
+            messages[index] = if (message.content.isBlank()) message.copy(content = "已停止生成", canContinue = false)
+                else message.copy(canContinue = message.canContinue || (!generationWebSearch && bufferedMessage == null))
         }
+        generationPaused = false
+        bufferedMessage = null
         saveCurrentSession()
     }
 
@@ -977,14 +1030,9 @@ class MainActivity : ComponentActivity() {
 
     private fun continueAnswer() {
         val latest = messages.lastOrNull() ?: return
-        if (sending || latest.role != "assistant" || latest.content.isBlank()) return
-        if (!latest.canContinue) return
-        if (!latest.continueAsFollowUp) beginGeneration(continuing = true)
-        else {
-            messages.add(ChatMessage("user", "请接着上一条回答继续，不要重复已讲过的内容。"))
-            saveCurrentSession()
-            beginGeneration()
-        }
+        if (generationPaused) { resumeGeneration(); return }
+        if (sending || latest.role != "assistant" || latest.content.isBlank() || !latest.canContinue) return
+        beginGeneration(continuing = true)
     }
 
     private fun newChat() {
