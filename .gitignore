@@ -10,3 +10,5 @@ references/
 voice-lab/vendor/
 voice-lab/src/main/assets/models/
 tts-lab/src/main/assets/fairy_voice/
+tts-lab/src/main/assets/zipvoice/
+tts-lab/vendor/
