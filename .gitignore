@@ -12,3 +12,6 @@ voice-lab/src/main/assets/models/
 tts-lab/src/main/assets/fairy_voice/
 tts-lab/src/main/assets/zipvoice/
 tts-lab/vendor/
+voice-pc/vendor/
+voice-pc/output/
+__pycache__/

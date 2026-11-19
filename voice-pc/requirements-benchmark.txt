@@ -1,0 +1,33 @@
+# CUDA torch and torchaudio are installed separately from the official cu124 index.
+# Only dependencies used by the local Fairy v2 inference path are needed here.
+torch==2.5.1+cu124
+torchaudio==2.5.1+cu124
+numpy<2
+scipy
+matplotlib<4
+gradio<5
+pandas<3
+onnxruntime==1.23.2
+opencc==1.4.2
+librosa==0.10.2
+pytorch-lightning>=2.4,<3
+ffmpeg-python
+cn2an
+pypinyin
+g2p_en
+sentencepiece
+transformers==4.50.0
+peft==0.15.2
+accelerate==1.6.0
+PyYAML
+psutil
+jieba_fast
+jieba
+split-lang
+fast_langdetect>=0.3.1
+wordsegment
+x_transformers==2.1.1
+torchmetrics==1.5.0
+chardet
+soundfile
+tqdm
