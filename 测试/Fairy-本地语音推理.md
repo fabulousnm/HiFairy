@@ -20,4 +20,6 @@
 
 诊断版测试包显示上次执行阶段、Android `ApplicationExitInfo` 退出原因及可读的原生跟踪摘要。用户复现并重启后截图确认：模型加载约 4494 ms；上次阶段为 `generating`；系统退出为原生崩溃、状态 6（`SIGABRT`）；原生跟踪明确指出 `NoSuchMethodError`，JNI 在 `generateWithConfigImpl` 回调过程中试图调用测试包 lambda 的 `invoke(F)Ljava/lang/Integer;`，与 Kotlin 侧回调签名不匹配。由此不能推断手机算力或内存不足。
 
-修复版 0.2.1 改用 sherpa 官方 `generateWithConfig` 无回调接口，避免该 JNI/Kotlin 回调不匹配；仍测完整推理时间、音频长度及 RTF，首块时间显示“无”。已构建成功，待真机安装复测，手机端推理性能和音色仍未验证。APK 路径仍为 `tts-lab/build/outputs/apk/debug/tts-lab-debug.apk`。对手机端与电脑端的可行性比较见《../调研/2026-11-19-Fairy-语音推理部署比较.md》。
+修复版 0.2.1 改用 sherpa 官方 `generateWithConfig` 无回调接口，避免该 JNI/Kotlin 回调不匹配；仍测完整推理时间、音频长度及 RTF，首块时间显示“无”。APK 路径仍为 `tts-lab/build/outputs/apk/debug/tts-lab-debug.apk`。对手机端与电脑端的可行性比较见《../调研/2026-11-19-Fairy-语音推理部署比较.md》。
+
+真机复测已通过生成和播放。用户截图：完整推理 11881 ms，音频长度 4651 ms，RTF 2.55；用户评价与 Fairy 原声音色差异很大。故 ZipVoice 包只保留独立对照，不接入正式应用。截图中的“系统退出：代码 16；状态 0”是上一次正常结束的历史记录，不是此次生成失败。
