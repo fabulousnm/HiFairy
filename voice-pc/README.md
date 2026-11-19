@@ -26,6 +26,8 @@
 
 ## 临时异网语音测试
 
+Windows 上可双击仓库根目录的 `启动HiFairy语音服务器.cmd`：脚本检查并复用已就绪的本地 Fairy 服务和 Cloudflare 通道；缺失时在后台启动，等待模型预热及公网健康检查，最后显示手机「语音播放」设置所需的 `wss://…/stream` 地址与访问令牌。命令行只检查现有服务可运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File voice-pc/start-hifairy-server.ps1 -StatusOnly`；虚拟环境位置变化时用 `-PythonPath` 指定 Python。令牌只从被 Git 忽略的 `vendor/remote-test-token.txt` 读取，不写入脚本或仓库。地址为临时 Quick Tunnel，每次重新建通道可能变化。
+
 `fairy_runtime.py` 统一模型路径、加载和请求配置，供基准脚本及 `server.py` 复用。服务器只绑定 `127.0.0.1:8765`，启动时预热 Fairy 原版模型，随后通过 `/stream` WebSocket 分段发送 32 kHz、单声道、16 位 PCM。测试令牌首次启动时生成在忽略的 `vendor/remote-test-token.txt`，客户端需在首条消息中发送令牌。主应用会将任意长度回答分段发送，不限制回答总字数。
 
 ```powershell

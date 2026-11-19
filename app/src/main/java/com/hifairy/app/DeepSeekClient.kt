@@ -5,12 +5,14 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
+data class StreamResult(val citations: List<ChatCitation>, val serverToolCalls: String, val finishReason: String)
+
 class DeepSeekClient {
     @Volatile private var connection: HttpURLConnection? = null
 
     fun cancel() { connection?.disconnect() }
 
-    fun stream(apiKey: String, model: String, effort: String, history: List<ChatMessage>, webSearch: Boolean, onText: (String) -> Unit, onReasoning: (String) -> Unit): Pair<List<ChatCitation>, String> {
+    fun stream(apiKey: String, model: String, effort: String, history: List<ChatMessage>, webSearch: Boolean, continuePrefix: Boolean, onText: (String) -> Unit, onReasoning: (String) -> Unit): StreamResult {
         val messages = JSONArray()
         history.forEach { message ->
             val content: Any = if (message.role == "user" && message.attachments.isNotEmpty()) JSONArray().apply {
@@ -19,6 +21,7 @@ class DeepSeekClient {
             } else message.content
             messages.put(JSONObject().put("role", message.role).put("content", content).apply {
                 if (message.role == "assistant" && message.serverToolCalls.isNotBlank()) put("server_tool_calls", JSONArray(message.serverToolCalls))
+                if (continuePrefix && message === history.last()) put("prefix", true)
             })
         }
         val body = JSONObject()
@@ -30,7 +33,9 @@ class DeepSeekClient {
             .put(JSONObject().put("type", "deepseek_read_url")))
         var annotations = JSONArray()
         var serverToolCalls = JSONArray()
-        val connection = (URL("https://api.deepseek.com/chat/completions").openConnection() as HttpURLConnection).apply {
+        var finishReason = ""
+        val endpoint = if (continuePrefix) "https://api.deepseek.com/beta/chat/completions" else "https://api.deepseek.com/chat/completions"
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = 15000
             readTimeout = 60000
@@ -54,7 +59,9 @@ class DeepSeekClient {
                     if (chunk.has("error")) throw IllegalStateException(chunk.getJSONObject("error").optString("message", "流式请求失败"))
                     val choices = chunk.optJSONArray("choices") ?: return@forEach
                     if (choices.length() == 0) return@forEach
-                    val delta = choices.getJSONObject(0).getJSONObject("delta")
+                    val choice = choices.getJSONObject(0)
+                    finishReason = choice.optString("finish_reason").takeUnless { it == "null" || it.isBlank() } ?: finishReason
+                    val delta = choice.optJSONObject("delta") ?: return@forEach
                     delta.optJSONArray("annotations")?.let { annotations = it }
                     delta.optJSONArray("server_tool_calls")?.let { serverToolCalls = it }
                     (delta.opt("content") as? String)?.takeIf { it.isNotEmpty() }?.let(onText)
@@ -68,6 +75,6 @@ class DeepSeekClient {
             if (!url.startsWith("https://")) return@mapNotNull null
             ChatCitation(citation.optString("title").ifBlank { url }, url)
         }.distinctBy { it.url }
-        return citations to serverToolCalls.toString()
+        return StreamResult(citations, serverToolCalls.toString(), finishReason)
     }
 }

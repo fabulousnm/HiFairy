@@ -190,6 +190,10 @@ private fun ActionGlyph(kind: String, color: Color, modifier: Modifier = Modifie
                 drawArc(color, 42f, 285f, false, style = androidx.compose.ui.graphics.drawscope.Stroke(stroke, cap = StrokeCap.Round))
                 line(17f, 3f, 17f, 8f); line(17f, 8f, 12f, 8f)
             }
+            "continue" -> {
+                line(10f, 2f, 10f, 15f); line(5f, 10f, 10f, 15f); line(15f, 10f, 10f, 15f)
+                line(4f, 18f, 16f, 18f)
+            }
             "edit" -> {
                 line(4f, 16f, 6f, 11f); line(6f, 11f, 14f, 3f)
                 line(14f, 3f, 17f, 6f); line(17f, 6f, 9f, 14f)
@@ -226,7 +230,7 @@ private fun MessageAction(kind: String, label: String, onClick: () -> Unit, colo
 }
 
 @Composable
-private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String, showRegenerate: Boolean, showEdit: Boolean, playing: Boolean, onCopy: () -> Unit, onEdit: () -> Unit, onRegenerate: () -> Unit, onReplay: () -> Unit) {
+private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String, showRegenerate: Boolean, showContinue: Boolean, showEdit: Boolean, playing: Boolean, onCopy: () -> Unit, onEdit: () -> Unit, onRegenerate: () -> Unit, onContinue: () -> Unit, onReplay: () -> Unit) {
     val isUser = message.role == "user"
     val context = LocalContext.current
     var reasoningExpanded by remember { mutableStateOf(false) }
@@ -265,6 +269,7 @@ private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String
                 MessageAction("copy", "复制回答", onCopy)
                 MessageAction(if (playing) "mute" else "speaker", if (playing) "停止播放" else "重听回答", onReplay, if (playing) ThemeTokens.accent else ThemeTokens.secondary)
                 if (showRegenerate) MessageAction("retry", "重新生成回答", onRegenerate)
+                if (showContinue) MessageAction("continue", "继续生成回答", onContinue)
             }
             if (isUser && showEdit) MessageAction("edit", "编辑并重新发送", onEdit)
         }
@@ -350,6 +355,7 @@ class MainActivity : ComponentActivity() {
     private var editingMessageIndex by mutableIntStateOf(-1)
     private val editingAttachments = mutableStateListOf<ChatAttachment>()
     private var sending by mutableStateOf(false)
+    private var generationWebSearch = false
     private var webSearch by mutableStateOf(false)
     private val pendingAttachments = mutableStateListOf<PendingAttachment>()
     private val pickAttachments = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -570,11 +576,13 @@ class MainActivity : ComponentActivity() {
                                         key(currentSessionId, index) {
                                             ChatBubble(message, displayNameDraft, avatarChoice,
                                                 showRegenerate = index == messages.lastIndex && !sending,
+                                                showContinue = index == messages.lastIndex && message.canContinue && !sending,
                                                 showEdit = index == messages.indexOfLast { it.role == "user" } && !sending,
                                                 playing = playingSessionId == currentSessionId && playingMessageIndex == index,
                                                 onCopy = { (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Fairy 回答", message.content)) },
                                                 onEdit = { stopGeneration(); editingMessageIndex = index; draft = message.content; editingAttachments.clear(); editingAttachments.addAll(message.attachments) },
                                                 onRegenerate = { regenerate() },
+                                                onContinue = { continueAnswer() },
                                                 onReplay = { if (playingSessionId == currentSessionId && playingMessageIndex == index) stopSpeech() else playAnswer(index) })
                                         }
                                     }
@@ -851,34 +859,39 @@ class MainActivity : ComponentActivity() {
         beginGeneration()
     }
 
-    private fun beginGeneration() {
+    private fun beginGeneration(continuing: Boolean = false) {
         if (sending) return
         stopSpeech()
         val apiKey = secureSettings.apiKey()
         if (apiKey.isEmpty()) { settingsFromHistory = false; page = "settings"; return }
         val context = messages.filter { it.content.isNotBlank() && it.content != "已停止生成" && !it.content.startsWith("请求失败：") }
-        val responseIndex = messages.size
-        messages.add(ChatMessage("assistant", ""))
+        val responseIndex = if (continuing) messages.lastIndex else messages.size
+        val previous = if (continuing) messages[responseIndex] else ChatMessage("assistant", "")
+        if (continuing) messages[responseIndex] = previous.copy(canContinue = false)
+        else messages.add(previous)
+        generationWebSearch = !continuing && webSearch
         sending = true
         val id = ++requestId
         val client = DeepSeekClient()
         activeClient = client
         Thread {
-            val answer = StringBuilder()
-            val reasoning = StringBuilder()
+            val answer = StringBuilder(previous.content)
+            val reasoning = StringBuilder(previous.reasoning)
             try {
-                val (citations, serverToolCalls) = client.stream(apiKey, secureSettings.model, secureSettings.effort, context, webSearch, { token ->
+                val result = client.stream(apiKey, secureSettings.model, secureSettings.effort, context, generationWebSearch, continuing, { token ->
                     answer.append(token)
                     val snapshot = answer.toString()
-                    runOnUiThread { if (id == requestId && responseIndex < messages.size) messages[responseIndex] = ChatMessage("assistant", snapshot, reasoning.toString()) }
+                    runOnUiThread { if (id == requestId && responseIndex < messages.size) messages[responseIndex] = previous.copy(content = snapshot, reasoning = reasoning.toString(), canContinue = false) }
                 }, { token ->
                     reasoning.append(token)
                     val snapshot = reasoning.toString()
-                    runOnUiThread { if (id == requestId && responseIndex < messages.size) messages[responseIndex] = ChatMessage("assistant", answer.toString(), snapshot) }
+                    runOnUiThread { if (id == requestId && responseIndex < messages.size) messages[responseIndex] = previous.copy(content = answer.toString(), reasoning = snapshot, canContinue = false) }
                 })
                 runOnUiThread {
                     if (id == requestId) {
-                        messages[responseIndex] = ChatMessage("assistant", answer.toString().ifBlank { "未收到回答" }, reasoning.toString(), citations, serverToolCalls)
+                        messages[responseIndex] = previous.copy(content = answer.toString().ifBlank { "未收到回答" }, reasoning = reasoning.toString(),
+                            citations = result.citations.ifEmpty { previous.citations }, serverToolCalls = result.serverToolCalls,
+                            canContinue = result.finishReason == "length" && !generationWebSearch && result.serverToolCalls == "[]")
                         sending = false
                         activeClient = null
                         saveCurrentSession()
@@ -887,7 +900,9 @@ class MainActivity : ComponentActivity() {
                 }
             } catch (e: Exception) {
                 runOnUiThread { if (id == requestId) {
-                    messages[responseIndex] = ChatMessage("assistant", "请求失败：${e.message}", reasoning.toString())
+                    messages[responseIndex] = if (continuing) previous.copy(content = answer.toString(), reasoning = reasoning.toString(), canContinue = true)
+                        else previous.copy(content = "请求失败：${e.message}", reasoning = reasoning.toString())
+                    if (continuing) Toast.makeText(this, "续答失败：${e.message}", Toast.LENGTH_LONG).show()
                     sending = false
                     activeClient = null
                     saveCurrentSession()
@@ -903,8 +918,10 @@ class MainActivity : ComponentActivity() {
         activeClient = null
         sending = false
         val index = messages.lastIndex
-        if (index >= 0 && messages[index].role == "assistant" && messages[index].content.isBlank()) {
-            messages[index] = messages[index].copy(content = "已停止生成")
+        if (index >= 0 && messages[index].role == "assistant") {
+            val message = messages[index]
+            messages[index] = if (message.content.isBlank()) message.copy(content = "已停止生成")
+                else message.copy(canContinue = !generationWebSearch)
         }
         saveCurrentSession()
     }
@@ -915,6 +932,11 @@ class MainActivity : ComponentActivity() {
         messages.removeAt(messages.lastIndex)
         saveCurrentSession()
         beginGeneration()
+    }
+
+    private fun continueAnswer() {
+        if (sending || messages.lastOrNull()?.role != "assistant" || messages.lastOrNull()?.canContinue != true) return
+        beginGeneration(continuing = true)
     }
 
     private fun newChat() {
