@@ -8,12 +8,13 @@
 - 角色权重及参考音频：`UnlimitedBurst/GPT-SoVITS` 修订 `361def686acbe777f9659944afed8c3925d6cd2e`，目录 `绝区零（已更新1.0）/Fairy`。权重为 v2。
 - 基础模型：`lj1995/GPT-SoVITS` 的 `chinese-hubert-base` 与 `chinese-roberta-wwm-ext-large`。
 - 中文 G2PW：`XXXXRT/GPT-SoVITS-Pretrained` 的 `G2PWModel.zip`，修订 `502bea75a80af535955c39eeef3f7c86bc235665`。
+- 中英混合文本：`fast-langdetect` 的 `lid.176.bin` 及 NLTK 的 CMU 词典、Punkt 和词性标注资源，运行 `voice-pc/prepare-language-assets.ps1` 下载、校验并解压到忽略目录。FastText 文件校验 MD5 为 `01810bc59c6a3d2b79c79e6336612f65`；其余 ZIP 的 SHA-256 固定在脚本中。
 
 所有下载放在 `voice-pc/vendor/`，虚拟环境放在项目之外，均不进入 Git。基准输出放在 `voice-pc/output/`，同样不提交。已校验两个 Fairy 权重和基础模型的 SHA-256 与 Hugging Face LFS 元数据一致。
 
 ## 运行
 
-使用 Python 3.11 和 RTX 4060 Laptop 的 CUDA 12.4 版 PyTorch 2.5.1；其余依赖见 `requirements-benchmark.txt`。运行前应保证 `ffmpeg.exe` 在 `PATH` 中，中文 G2PW 模型解压为 `voice-pc/vendor/GPT-SoVITS/GPT_SoVITS/text/G2PWModel/`。
+使用 Python 3.11 和 RTX 4060 Laptop 的 CUDA 12.4 版 PyTorch 2.5.1；其余依赖见 `requirements-benchmark.txt`。运行前应保证 `ffmpeg.exe` 在 `PATH` 中，中文 G2PW 模型解压为 `voice-pc/vendor/GPT-SoVITS/GPT_SoVITS/text/G2PWModel/`，并运行一次 `voice-pc/prepare-language-assets.ps1`。服务和基准脚本启动时会预加载中英混合语言识别与英文发音资源，缺失时在启动阶段报错。
 
 ```powershell
 & '<虚拟环境>\Scripts\python.exe' voice-pc\benchmark.py --repeats 3

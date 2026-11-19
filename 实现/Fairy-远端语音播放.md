@@ -7,3 +7,5 @@
 语音服务地址与令牌在设置页的「语音播放」中配置。地址必须为 `wss://…/stream`；令牌用 Android Keystore AES-GCM 加密存储，应用代码与 APK 不包含临时测试令牌或随机公网网址。当前 Quick Tunnel 仅用于实验，电脑服务和通道需要保持运行；入口网址变更后须在设置中更新。长期使用还需稳定入口、身份鉴权及服务守护。
 
 验证：`./gradlew.bat :app:assembleDebug` 构建通过。PC 本机 WebSocket 连续两次请求成功；中断超过 180 字的生成请求后，新请求约 2.87 秒完成，说明旧请求不会无限占用模型。Android 模拟器安装成功、Activity 进程存活且无 AndroidRuntime 崩溃；UI 自动播放开关两次点击依次变为静音和音响，设置页能显示语音服务配置。真实 nova 14 上的播放、退后台中断、长回答连续播放仍需安装后验证。APK 为 `app/build/outputs/apk/debug/app-debug.apk`。
+
+真机反馈：首次纯中文回答播放成功，随后包含 “DeepSeek / AI” 的回答报 `fast-langdetect: Cache directory not found`。服务日志表明中英混合文本触发之前未走到的语言识别与英文 G2P 路径；补齐 FastText 模型及 NLTK 的 CMU 词典、Punkt、词性标注资源后，启动时预加载并验证该路径。修复只涉及电脑服务及忽略目录中的资源，手机 APK 无需更换。两次连续生成截图中的混合文本均成功，分别返回 8 个音频块，首段为 1.59 / 1.44 秒，完整生成 7.86 / 7.19 秒；公网入口复测含 “Fairy AI” 的两次请求也成功。

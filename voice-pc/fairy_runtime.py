@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parent
 ENGINE = ROOT / "vendor" / "GPT-SoVITS"
 FAIRY = ROOT / "vendor" / "fairy-models" / "绝区零（已更新1.0）" / "Fairy"
 PRETRAINED = ENGINE / "GPT_SoVITS" / "pretrained_models"
+NLTK_DATA = ROOT / "vendor" / "nltk_data"
 REFERENCE_TEXT = "了解我会如同主人使唤我一般使唤它，并且让它不敢有怨言。"
 REFERENCE_WAV = FAIRY / f"{REFERENCE_TEXT}.wav"
 
@@ -20,11 +21,18 @@ def load_pipeline():
         REFERENCE_WAV, PRETRAINED / "chinese-hubert-base" / "pytorch_model.bin",
         PRETRAINED / "chinese-roberta-wwm-ext-large" / "pytorch_model.bin",
         ENGINE / "GPT_SoVITS" / "text" / "G2PWModel" / "g2pW.onnx",
+        PRETRAINED / "fast_langdetect" / "lid.176.bin",
+        NLTK_DATA / "corpora" / "cmudict",
+        NLTK_DATA / "tokenizers" / "punkt",
+        NLTK_DATA / "tokenizers" / "punkt_tab",
+        NLTK_DATA / "taggers" / "averaged_perceptron_tagger",
+        NLTK_DATA / "taggers" / "averaged_perceptron_tagger_eng",
     )
     for path in required:
         if not path.exists():
             raise FileNotFoundError(path)
     os.chdir(ENGINE)
+    os.environ["NLTK_DATA"] = str(NLTK_DATA)
     sys.path.insert(0, str(ENGINE))
     sys.path.insert(0, str(ENGINE / "GPT_SoVITS"))
     import torch
@@ -44,6 +52,14 @@ def load_pipeline():
     })
     start = perf_counter()
     pipeline = TTS(config)
+    # GPT-SoVITS selects this detector only for mixed-language text. Load it now
+    # so a later answer never starts an implicit download or fails mid-stream.
+    import fast_langdetect
+    fast_langdetect.detect("DeepSeek AI", model="full")
+    # The English G2P path also loads NLTK corpora lazily. A mixed-language
+    # answer must work before the service starts accepting phone requests.
+    from text.english import _g2p
+    _g2p("DeepSeek AI")
     return pipeline, round((perf_counter() - start) * 1000)
 
 
