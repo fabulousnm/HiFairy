@@ -25,13 +25,13 @@ class SecureSettings(context: Context) {
         }.generateKey()
     }
 
-    fun saveApiKey(value: String) {
+    private fun saveSecret(name: String, value: String) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, secretKey()) }
-        prefs.edit().putString("api_key", Base64.encodeToString(cipher.iv + cipher.doFinal(value.toByteArray()), Base64.NO_WRAP)).apply()
+        prefs.edit().putString(name, Base64.encodeToString(cipher.iv + cipher.doFinal(value.toByteArray()), Base64.NO_WRAP)).apply()
     }
 
-    fun apiKey(): String {
-        val stored = prefs.getString("api_key", null) ?: return ""
+    private fun readSecret(name: String): String {
+        val stored = prefs.getString(name, null) ?: return ""
         return try {
             val bytes = Base64.decode(stored, Base64.NO_WRAP)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply {
@@ -40,6 +40,9 @@ class SecureSettings(context: Context) {
             String(cipher.doFinal(bytes.copyOfRange(12, bytes.size)))
         } catch (_: Exception) { "" }
     }
+
+    fun saveApiKey(value: String) = saveSecret("api_key", value)
+    fun apiKey(): String = readSecret("api_key")
 
     var model: String
         get() = prefs.getString("model", "deepseek-flash") ?: "deepseek-flash"
@@ -56,4 +59,15 @@ class SecureSettings(context: Context) {
     var avatar: String
         get() = prefs.getString("avatar", "ling") ?: "ling"
         set(value) { prefs.edit().putString("avatar", value).apply() }
+
+    var voiceEndpoint: String
+        get() = prefs.getString("voice_endpoint", "") ?: ""
+        set(value) { prefs.edit().putString("voice_endpoint", value).apply() }
+
+    var voiceAutoPlay: Boolean
+        get() = prefs.getBoolean("voice_auto_play", true)
+        set(value) { prefs.edit().putBoolean("voice_auto_play", value).apply() }
+
+    fun saveVoiceToken(value: String) = saveSecret("voice_token", value)
+    fun voiceToken(): String = readSecret("voice_token")
 }

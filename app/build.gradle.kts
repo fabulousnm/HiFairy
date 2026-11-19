@@ -34,5 +34,6 @@ dependencies {
     implementation("io.noties.markwon:ext-tables:4.6.2")
     implementation("io.noties.markwon:ext-strikethrough:4.6.2")
     implementation("io.noties.markwon:ext-tasklist:4.6.2")
+    implementation("com.squareup.okhttp3:okhttp:5.3.0")
     implementation(files("../voice-lab/vendor/sherpa-static.aar"))
 }

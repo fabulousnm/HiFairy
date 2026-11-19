@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.widget.VideoView
 import android.widget.TextView
+import android.widget.Toast
 import android.graphics.BitmapFactory
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -204,6 +205,14 @@ private fun ActionGlyph(kind: String, color: Color, modifier: Modifier = Modifie
                 for (x in listOf(5f, 9f, 13f)) for (y in listOf(8f, 11f)) drawCircle(color, unit, Offset(x * unit, y * unit))
                 line(6f, 14f, 14f, 14f)
             }
+            "speaker", "mute" -> {
+                line(3f, 8f, 6f, 8f); line(3f, 8f, 3f, 12f); line(3f, 12f, 6f, 12f)
+                line(6f, 8f, 11f, 4f); line(11f, 4f, 11f, 16f); line(11f, 16f, 6f, 12f)
+                if (kind == "speaker") {
+                    drawArc(color, -55f, 110f, false, topLeft = Offset(9f * unit, 4f * unit), size = Size(7f * unit, 12f * unit), style = Stroke(stroke, cap = StrokeCap.Round))
+                    drawArc(color, -55f, 110f, false, topLeft = Offset(9f * unit, 1f * unit), size = Size(11f * unit, 18f * unit), style = Stroke(stroke, cap = StrokeCap.Round))
+                } else line(14f, 6f, 19f, 14f)
+            }
         }
     }
 }
@@ -216,7 +225,7 @@ private fun MessageAction(kind: String, label: String, onClick: () -> Unit, colo
 }
 
 @Composable
-private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String, showRegenerate: Boolean, showEdit: Boolean, onCopy: () -> Unit, onEdit: () -> Unit, onRegenerate: () -> Unit) {
+private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String, showRegenerate: Boolean, showEdit: Boolean, playing: Boolean, onCopy: () -> Unit, onEdit: () -> Unit, onRegenerate: () -> Unit, onReplay: () -> Unit) {
     val isUser = message.role == "user"
     var reasoningExpanded by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Top) {
@@ -237,6 +246,7 @@ private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String
             }
             if (!isUser && message.content.isNotBlank()) Row(verticalAlignment = Alignment.CenterVertically) {
                 MessageAction("copy", "复制回答", onCopy)
+                MessageAction(if (playing) "mute" else "speaker", if (playing) "停止播放" else "重听回答", onReplay, if (playing) ThemeTokens.accent else ThemeTokens.secondary)
                 if (showRegenerate) MessageAction("retry", "重新生成回答", onRegenerate)
             }
             if (isUser && showEdit) MessageAction("edit", "编辑并重新发送", onEdit)
@@ -296,6 +306,13 @@ class MainActivity : ComponentActivity() {
     private var voiceCancel by mutableStateOf(false)
     private var voiceLevel by mutableFloatStateOf(0f)
     private var voiceStatus by mutableStateOf("")
+    private var voiceAutoPlay by mutableStateOf(true)
+    private var playingMessageIndex by mutableIntStateOf(-1)
+    private var playingSessionId by mutableLongStateOf(0L)
+    private var playingRequestId = 0L
+    private lateinit var speechPlayer: FairySpeechPlayer
+    private var voiceEndpointDraft by mutableStateOf("")
+    private var voiceTokenDraft by mutableStateOf("")
     private lateinit var voiceInput: ParaformerVoiceInput
     private var page by mutableStateOf("chat")
     private var settingsFromHistory = false
@@ -346,6 +363,14 @@ class MainActivity : ComponentActivity() {
         effortDraft = secureSettings.effort
         displayNameDraft = secureSettings.displayName
         avatarChoice = secureSettings.avatar
+        voiceAutoPlay = secureSettings.voiceAutoPlay
+        voiceEndpointDraft = secureSettings.voiceEndpoint
+        speechPlayer = FairySpeechPlayer { id, active, error ->
+            runOnUiThread {
+                if (id == playingRequestId && !active) { playingMessageIndex = -1; playingSessionId = 0L }
+                if (error != null) Toast.makeText(this, error, Toast.LENGTH_LONG).show()
+            }
+        }
         voiceInput = ParaformerVoiceInput(this, { voiceStatus = it }, { voiceLevel = it }, { transcript ->
             val previousDraft = draft
             if (sending) stopGeneration()
@@ -475,10 +500,17 @@ class MainActivity : ComponentActivity() {
                         Text("设置", color = ThemeTokens.text, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                     }
                 } else {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("☰", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { historyOpen = true })
                         Text("H.D.D Ⅲ", color = ThemeTokens.text, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.brandTracking)
-                        Text("＋", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { newChat() })
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            MessageAction(if (voiceAutoPlay) "speaker" else "mute", if (voiceAutoPlay) "关闭自动播放" else "开启自动播放", {
+                                voiceAutoPlay = !voiceAutoPlay
+                                secureSettings.voiceAutoPlay = voiceAutoPlay
+                                if (!voiceAutoPlay) stopSpeech()
+                            }, ThemeTokens.accent)
+                            Text("＋", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { newChat() })
+                        }
                     }
                 }
                 when (page) {
@@ -502,9 +534,11 @@ class MainActivity : ComponentActivity() {
                                             ChatBubble(message, displayNameDraft, avatarChoice,
                                                 showRegenerate = index == messages.lastIndex && !sending,
                                                 showEdit = index == messages.indexOfLast { it.role == "user" } && !sending,
+                                                playing = playingSessionId == currentSessionId && playingMessageIndex == index,
                                                 onCopy = { (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Fairy 回答", message.content)) },
                                                 onEdit = { stopGeneration(); editingMessageIndex = index; draft = message.content },
-                                                onRegenerate = { regenerate() })
+                                                onRegenerate = { regenerate() },
+                                                onReplay = { if (playingSessionId == currentSessionId && playingMessageIndex == index) stopSpeech() else playAnswer(index) })
                                         }
                                     }
                                 }
@@ -609,6 +643,24 @@ class MainActivity : ComponentActivity() {
                                 val effortOptions = selectedModel?.let { listOf("none") + it.effortLevels } ?: listOf(effortDraft)
                                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { effortOptions.forEach { option -> Text(option, color = if (effortDraft == option) ThemeTokens.background else ThemeTokens.secondary, fontSize = 12.sp, modifier = Modifier.background(if (effortDraft == option) ThemeTokens.accent else ThemeTokens.background, RoundedCornerShape(10.dp)).clickable(enabled = selectedModel != null) { effortDraft = option; secureSettings.effort = option }.padding(horizontal = 10.dp, vertical = 9.dp)) } }
                             }
+                            SettingsCard("FAIRY // VOICE", "语音播放") {
+                                Text("电脑端语音服务地址（wss://…/stream）", color = ThemeTokens.secondary, fontSize = 12.sp)
+                                TextField(value = voiceEndpointDraft, onValueChange = { voiceEndpointDraft = it }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = darkFieldColors())
+                                Text("语音服务令牌", color = ThemeTokens.secondary, fontSize = 12.sp)
+                                TextField(value = voiceTokenDraft, onValueChange = { voiceTokenDraft = it }, visualTransformation = PasswordVisualTransformation(), placeholder = { Text(if (secureSettings.voiceToken().isBlank()) "输入令牌" else "已保存 · 留空保持原令牌", color = ThemeTokens.secondary) }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = darkFieldColors())
+                                Button(onClick = {
+                                    val endpoint = voiceEndpointDraft.trim()
+                                    if (!endpoint.startsWith("wss://") || !endpoint.endsWith("/stream")) {
+                                        Toast.makeText(this@MainActivity, "地址应为 wss://…/stream", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        secureSettings.voiceEndpoint = endpoint
+                                        if (voiceTokenDraft.isNotBlank()) { secureSettings.saveVoiceToken(voiceTokenDraft.trim()); voiceTokenDraft = "" }
+                                        stopSpeech()
+                                        Toast.makeText(this@MainActivity, "语音配置已保存", Toast.LENGTH_SHORT).show()
+                                    }
+                                }) { Text("保存语音配置") }
+                                Text("自动播放可在聊天页右上角切换；回答下方的音响按钮可随时重听。", color = ThemeTokens.secondary, fontSize = 12.sp)
+                            }
                         }
                     }
                 }
@@ -688,6 +740,33 @@ class MainActivity : ComponentActivity() {
         settingsFromHistory = false
     }
 
+    private fun playAnswer(index: Int) {
+        val message = messages.getOrNull(index) ?: return
+        if (message.role != "assistant" || message.content.isBlank() || sending) return
+        val endpoint = secureSettings.voiceEndpoint
+        val token = secureSettings.voiceToken()
+        if (endpoint.isBlank() || token.isBlank()) {
+            Toast.makeText(this, "请先在设置中配置 Fairy 语音服务", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (speechPlayer.play(endpoint, token, message.content, ++playingRequestId)) {
+            playingMessageIndex = index
+            playingSessionId = currentSessionId
+        }
+    }
+
+    private fun stopSpeech() {
+        if (::speechPlayer.isInitialized) speechPlayer.stop()
+        playingRequestId++
+        playingMessageIndex = -1
+        playingSessionId = 0L
+    }
+
+    override fun onPause() {
+        stopSpeech()
+        super.onPause()
+    }
+
     private fun sendMessage() {
         val input = draft.trim()
         if (input.isEmpty() || sending) return
@@ -708,6 +787,7 @@ class MainActivity : ComponentActivity() {
 
     private fun beginGeneration() {
         if (sending) return
+        stopSpeech()
         val apiKey = secureSettings.apiKey()
         if (apiKey.isEmpty()) { settingsFromHistory = false; page = "settings"; return }
         val context = messages.filter { it.content.isNotBlank() && it.content != "已停止生成" && !it.content.startsWith("请求失败：") }
@@ -737,6 +817,7 @@ class MainActivity : ComponentActivity() {
                         sending = false
                         activeClient = null
                         saveCurrentSession()
+                        if (voiceAutoPlay && answer.isNotBlank()) playAnswer(responseIndex)
                     }
                 }
             } catch (e: Exception) {
@@ -765,12 +846,14 @@ class MainActivity : ComponentActivity() {
 
     private fun regenerate() {
         if (sending || messages.lastOrNull()?.role != "assistant") return
+        stopSpeech()
         messages.removeAt(messages.lastIndex)
         saveCurrentSession()
         beginGeneration()
     }
 
     private fun newChat() {
+        stopSpeech()
         chatOpenedFromHistory = historyOpen
         historyOpen = false
         stopGeneration()
@@ -783,6 +866,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openSession(session: ChatSession) {
+        stopSpeech()
         chatOpenedFromHistory = true
         historyOpen = false
         stopGeneration()
@@ -813,6 +897,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun deleteSession(id: Long) {
+        if (currentSessionId == id) stopSpeech()
         if (currentSessionId == id) { stopGeneration(); messages.clear(); currentSessionId = 0L }
         sessions.removeAll { it.id == id }
         chatStore.save(sessions)
@@ -820,6 +905,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         activeClient?.cancel()
+        speechPlayer.close()
         voiceInput.close()
         super.onDestroy()
     }

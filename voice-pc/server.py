@@ -5,6 +5,7 @@ import asyncio
 import hmac
 import json
 import secrets
+from threading import Event
 from pathlib import Path
 from time import perf_counter
 
@@ -34,13 +35,15 @@ async def health():
     return {"ready": pipeline is not None, "stream": "websocket"}
 
 
-def generate(text, loop, queue):
+def generate(text, loop, queue, cancelled):
     start = perf_counter()
     try:
         first_ms = None
         samples_total = 0
         chunk_count = 0
         for rate, samples in pipeline.run(build_request(text)):
+            if cancelled.is_set():
+                break
             pcm = np.asarray(samples, dtype="<i2").tobytes()
             if not pcm:
                 continue
@@ -74,29 +77,32 @@ async def stream(ws: WebSocket):
                     await ws.close(code=1008, reason="Invalid test token")
                     return
                 authenticated = True
-            if not isinstance(text, str) or not 1 <= len(text.strip()) <= 180:
-                await ws.send_json({"type": "error", "message": "文本长度需要在 1 到 180 字之间。"})
-                continue
-            if generation_lock.locked():
-                await ws.send_json({"type": "error", "message": "Fairy 正在处理另一条请求，请稍后再试。"})
+            if not isinstance(text, str) or not text.strip():
+                await ws.send_json({"type": "error", "message": "请输入需要朗读的文字。"})
                 continue
             async with generation_lock:
                 queue = asyncio.Queue()
-                worker = asyncio.create_task(asyncio.to_thread(generate, text.strip(), asyncio.get_running_loop(), queue))
-                await ws.send_json({"type": "started"})
-                while True:
-                    item = await queue.get()
-                    if item[0] == "audio":
-                        _, rate, pcm = item
-                        await ws.send_json({"type": "audio", "sample_rate": rate})
-                        await ws.send_bytes(pcm)
-                    elif item[0] == "done":
-                        await ws.send_json({"type": "done", **item[1]})
-                        break
-                    else:
-                        await ws.send_json({"type": "error", "message": item[1]})
-                        break
-                await worker
+                cancelled = Event()
+                worker = asyncio.create_task(asyncio.to_thread(generate, text.strip(), asyncio.get_running_loop(), queue, cancelled))
+                try:
+                    await ws.send_json({"type": "started"})
+                    while True:
+                        item = await queue.get()
+                        if item[0] == "audio":
+                            _, rate, pcm = item
+                            await ws.send_json({"type": "audio", "sample_rate": rate})
+                            await ws.send_bytes(pcm)
+                        elif item[0] == "done":
+                            await ws.send_json({"type": "done", **item[1]})
+                            break
+                        else:
+                            await ws.send_json({"type": "error", "message": item[1]})
+                            break
+                finally:
+                    cancelled.set()
+                    if not worker.done():
+                        pipeline.stop()
+                    await worker
     except Exception as exc:
         print(f"WebSocket closed: {type(exc).__name__}: {exc}", flush=True)
     finally:
