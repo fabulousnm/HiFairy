@@ -10,6 +10,7 @@ import android.graphics.BitmapFactory
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ActivityInfo
 import java.io.File
 import java.time.LocalTime
@@ -227,6 +228,7 @@ private fun MessageAction(kind: String, label: String, onClick: () -> Unit, colo
 @Composable
 private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String, showRegenerate: Boolean, showEdit: Boolean, playing: Boolean, onCopy: () -> Unit, onEdit: () -> Unit, onRegenerate: () -> Unit, onReplay: () -> Unit) {
     val isUser = message.role == "user"
+    val context = LocalContext.current
     var reasoningExpanded by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Top) {
         if (!isUser) ChatAvatar("assistant", avatar, Modifier.size(36.dp))
@@ -242,6 +244,15 @@ private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String
             if (message.content.isNotBlank() || message.reasoning.isBlank()) {
                 Box(Modifier.background(if (isUser) ThemeTokens.userBubble else ThemeTokens.fairyBubble, RoundedCornerShape(16.dp)).padding(horizontal = 14.dp, vertical = 11.dp)) {
                     MarkdownMessage(message.content.ifBlank { "正在思考…" }, Modifier.fillMaxWidth())
+                }
+            }
+            if (!isUser && message.citations.isNotEmpty()) {
+                Text("参考来源", color = ThemeTokens.secondary, fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp, bottom = 3.dp))
+                message.citations.forEachIndexed { index, citation ->
+                    Text("${index + 1}. ${citation.title}", color = ThemeTokens.accent, fontSize = 12.sp,
+                        maxLines = 2, modifier = Modifier.fillMaxWidth().clickable {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(citation.url)))
+                        }.padding(vertical = 4.dp))
                 }
             }
             if (!isUser && message.content.isNotBlank()) Row(verticalAlignment = Alignment.CenterVertically) {
@@ -332,6 +343,7 @@ class MainActivity : ComponentActivity() {
     private var renameDraft by mutableStateOf("")
     private var editingMessageIndex by mutableIntStateOf(-1)
     private var sending by mutableStateOf(false)
+    private var webSearch by mutableStateOf(false)
     private lateinit var secureSettings: SecureSettings
     private var keyDraft by mutableStateOf("")
     private var modelDraft by mutableStateOf("deepseek-flash")
@@ -364,6 +376,7 @@ class MainActivity : ComponentActivity() {
         displayNameDraft = secureSettings.displayName
         avatarChoice = secureSettings.avatar
         voiceAutoPlay = secureSettings.voiceAutoPlay
+        webSearch = secureSettings.webSearch
         voiceEndpointDraft = secureSettings.voiceEndpoint
         speechPlayer = FairySpeechPlayer { id, active, error ->
             runOnUiThread {
@@ -581,12 +594,18 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         } else {
+                            Column(Modifier.fillMaxWidth()) {
+                            Text(if (webSearch) "◎ 联网搜索已开" else "◎ 联网搜索", color = if (webSearch) ThemeTokens.accent else ThemeTokens.secondary,
+                                fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp).background(if (webSearch) ThemeTokens.reasoningBubble else ThemeTokens.surface, RoundedCornerShape(12.dp))
+                                    .border(1.dp, if (webSearch) ThemeTokens.accent else ThemeTokens.secondary, RoundedCornerShape(12.dp))
+                                    .clickable { webSearch = !webSearch; secureSettings.webSearch = webSearch }.padding(horizontal = 12.dp, vertical = 7.dp))
                             Row(Modifier.fillMaxWidth().background(if (editingMessageIndex >= 0) Color(0xFF1C2549) else ThemeTokens.surface, RoundedCornerShape(18.dp)).border(if (editingMessageIndex >= 0) 1.dp else 0.dp, ThemeTokens.accent, RoundedCornerShape(18.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 if (editingMessageIndex >= 0) ActionGlyph("edit", ThemeTokens.accent, Modifier.padding(start = 8.dp))
                                 if (editingMessageIndex < 0) MessageAction("mic", "切换语音输入", { voiceMode = true; if (microphoneGranted) voiceInput.prepare() else requestMicrophone.launch(Manifest.permission.RECORD_AUDIO) }, ThemeTokens.accent)
                                 TextField(value = draft, onValueChange = { draft = it }, placeholder = { Text("向 Fairy 提问…", color = ThemeTokens.secondary) }, modifier = Modifier.weight(1f), colors = TextFieldDefaults.colors(focusedTextColor = ThemeTokens.text, unfocusedTextColor = ThemeTokens.text, cursorColor = ThemeTokens.accent, focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
                                 if (editingMessageIndex >= 0) MessageAction("cancel", "取消编辑", { editingMessageIndex = -1; draft = "" }, ThemeTokens.text)
                                 Text(if (sending) "■" else "➤", color = ThemeTokens.accent, fontSize = 25.sp, modifier = Modifier.clickable { if (sending) stopGeneration() else sendMessage() })
+                            }
                             }
                         }
                     }
@@ -770,6 +789,7 @@ class MainActivity : ComponentActivity() {
     private fun sendMessage() {
         val input = draft.trim()
         if (input.isEmpty() || sending) return
+        if (webSearch && secureSettings.model != "deepseek-flash") { Toast.makeText(this, "联网搜索需在设置中选择 deepseek-flash 模型", Toast.LENGTH_LONG).show(); return }
         if (secureSettings.apiKey().isEmpty()) { settingsFromHistory = false; page = "settings"; status = "请先配置 DeepSeek API Key"; return }
         draft = ""
         if (editingMessageIndex >= 0) {
@@ -791,7 +811,6 @@ class MainActivity : ComponentActivity() {
         val apiKey = secureSettings.apiKey()
         if (apiKey.isEmpty()) { settingsFromHistory = false; page = "settings"; return }
         val context = messages.filter { it.content.isNotBlank() && it.content != "已停止生成" && !it.content.startsWith("请求失败：") }
-            .map { it.role to it.content }
         val responseIndex = messages.size
         messages.add(ChatMessage("assistant", ""))
         sending = true
@@ -802,7 +821,7 @@ class MainActivity : ComponentActivity() {
             val answer = StringBuilder()
             val reasoning = StringBuilder()
             try {
-                client.stream(apiKey, secureSettings.model, secureSettings.effort, context, { token ->
+                val (citations, serverToolCalls) = client.stream(apiKey, secureSettings.model, secureSettings.effort, context, webSearch, { token ->
                     answer.append(token)
                     val snapshot = answer.toString()
                     runOnUiThread { if (id == requestId && responseIndex < messages.size) messages[responseIndex] = ChatMessage("assistant", snapshot, reasoning.toString()) }
@@ -813,7 +832,7 @@ class MainActivity : ComponentActivity() {
                 })
                 runOnUiThread {
                     if (id == requestId) {
-                        messages[responseIndex] = ChatMessage("assistant", answer.toString().ifBlank { "未收到回答" }, reasoning.toString())
+                        messages[responseIndex] = ChatMessage("assistant", answer.toString().ifBlank { "未收到回答" }, reasoning.toString(), citations, serverToolCalls)
                         sending = false
                         activeClient = null
                         saveCurrentSession()
