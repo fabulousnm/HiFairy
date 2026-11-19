@@ -32,4 +32,4 @@
 & '<虚拟环境>\Scripts\python.exe' voice-pc\client_benchmark.py ws://127.0.0.1:8765/stream
 ```
 
-手机测试页是 `web_test.html`。临时公网入口可用 cloudflared Quick Tunnel 连接本地服务；网址会变动，没有运行保证。网页的令牌可放在链接的 `#token=...` 片段中，页面读后会立即清除片段。该片段不随 HTTP 请求发送。公网入口用于实验，不作为正式部署；具体测量及局限见《../测试/Fairy-异网语音传输.md》。
+手机测试页是 `web_test.html`。同一 WebSocket 连接可连续请求，第二次起可直接观察连接复用后的耗时；命令行用 `--repeats 2` 测同一连接的两次请求。临时公网入口可用 cloudflared Quick Tunnel 连接本地服务；网址会变动，没有运行保证。网页的令牌可放在链接的 `#token=...` 片段中，页面读后会立即清除片段。该片段不随 HTTP 请求发送。公网入口用于实验，不作为正式部署；具体测量及局限见《../测试/Fairy-异网语音传输.md》。

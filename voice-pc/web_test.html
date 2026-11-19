@@ -15,26 +15,31 @@
 <p>使用电脑端原版 Fairy 权重。请在手机关闭 Wi-Fi、使用移动数据时测试。首段到达时间包含网络传输和电脑推理。</p>
 <label for="token">临时测试令牌</label><input id="token" type="password" autocomplete="off">
 <label for="message">测试文本</label><textarea id="message">主人，语音模块已就绪。今天有什么任务需要本系统处理？</textarea>
-<button id="play">生成并播放</button><pre id="status">等待测试</pre>
+<button id="play">生成并播放</button><pre id="status">等待测试；连续点击两次可比较连接复用效果。</pre>
 <script>
 const tokenInput=document.querySelector('#token');
 const fragment=new URLSearchParams(location.hash.slice(1));
-if(fragment.has('token')){tokenInput.value=fragment.get('token');history.replaceState(null,'',location.pathname)}
+if(fragment.has('token')){tokenInput.value=fragment.get('token');sessionStorage.setItem('fairy-test-token',tokenInput.value);history.replaceState(null,'',location.pathname)}
+else tokenInput.value=sessionStorage.getItem('fairy-test-token')||'';
 const button=document.querySelector('#play'),status=document.querySelector('#status');
+let socket=null;
 button.onclick=async()=>{
   button.disabled=true;
   const ctx=new AudioContext(), start=performance.now();
   await ctx.resume();
-  const ws=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/stream`);
+  const reused=socket?.readyState===WebSocket.OPEN;
+  const ws=reused?socket:new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/stream`);
+  socket=ws;
   ws.binaryType='arraybuffer';
   let opened,firstByte,firstPlay,bytes=0,chunks=0,nextTime=ctx.currentTime,pendingRate=32000,done=false;
-  const show=(extra='')=>status.textContent=`连接: ${opened??'—'} ms\n首段到达: ${firstByte??'—'} ms\n首段排播: ${firstPlay??'—'} ms\n音频块: ${chunks}\n接收字节: ${bytes}\n${extra}`;
-  ws.onopen=()=>{opened=Math.round(performance.now()-start);ws.send(JSON.stringify({token:tokenInput.value,text:document.querySelector('#message').value}));show('电脑端推理中…')};
+  const show=(extra='')=>status.textContent=`连接: ${opened??'—'} ms${reused?'（复用）':''}\n首段到达: ${firstByte??'—'} ms\n首段排播: ${firstPlay??'—'} ms\n音频块: ${chunks}\n接收字节: ${bytes}\n${extra}`;
+  const send=()=>{opened=Math.round(performance.now()-start);ws.send(JSON.stringify({token:tokenInput.value,text:document.querySelector('#message').value}));show('电脑端推理中…')};
+  if(reused)send();else ws.onopen=send;
   ws.onmessage=e=>{
     if(typeof e.data==='string'){
       const msg=JSON.parse(e.data);
       if(msg.type==='audio')pendingRate=msg.sample_rate;
-      if(msg.type==='done'){done=true;show(`完整接收: ${Math.round(performance.now()-start)} ms\n电脑首段生成: ${msg.server_first_chunk_ms} ms\n电脑完整推理: ${msg.server_total_ms} ms\n音频长度: ${msg.audio_ms} ms`);button.disabled=false;ws.close()}
+      if(msg.type==='done'){done=true;show(`完整接收: ${Math.round(performance.now()-start)} ms\n电脑首段生成: ${msg.server_first_chunk_ms} ms\n电脑完整推理: ${msg.server_total_ms} ms\n音频长度: ${msg.audio_ms} ms`);button.disabled=false}
       if(msg.type==='error'){show(`错误: ${msg.message}`);button.disabled=false}
       return;
     }
@@ -47,7 +52,7 @@ button.onclick=async()=>{
     nextTime+=buffer.duration;bytes+=e.data.byteLength;chunks++;show('播放中…');
   };
   ws.onerror=()=>show('连接或传输失败');
-  ws.onclose=e=>{if(!done){show(`连接关闭: ${e.code} ${e.reason}`);button.disabled=false}}
+  ws.onclose=e=>{socket=null;if(!done){show(`连接关闭: ${e.code} ${e.reason}`);button.disabled=false}}
 };
 </script>
 </html>

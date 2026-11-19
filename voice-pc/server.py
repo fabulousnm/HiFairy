@@ -64,35 +64,39 @@ def generate(text, loop, queue):
 async def stream(ws: WebSocket):
     await ws.accept()
     try:
-        request = json.loads(await ws.receive_text())
-        supplied = request.get("token", "")
-        text = request.get("text", "").strip()
-        if not isinstance(supplied, str) or not hmac.compare_digest(supplied, token):
-            await ws.close(code=1008, reason="Invalid test token")
-            return
-        if not isinstance(text, str) or not 1 <= len(text) <= 180:
-            await ws.close(code=1008, reason="Text must be 1 to 180 characters")
-            return
-        if generation_lock.locked():
-            await ws.send_json({"type": "error", "message": "Fairy 正在处理另一条请求，请稍后再试。"})
-            return
-        async with generation_lock:
-            queue = asyncio.Queue()
-            worker = asyncio.create_task(asyncio.to_thread(generate, text, asyncio.get_running_loop(), queue))
-            await ws.send_json({"type": "started"})
-            while True:
-                item = await queue.get()
-                if item[0] == "audio":
-                    _, rate, pcm = item
-                    await ws.send_json({"type": "audio", "sample_rate": rate})
-                    await ws.send_bytes(pcm)
-                elif item[0] == "done":
-                    await ws.send_json({"type": "done", **item[1]})
-                    break
-                else:
-                    await ws.send_json({"type": "error", "message": item[1]})
-                    break
-            await worker
+        authenticated = False
+        while True:
+            request = json.loads(await ws.receive_text())
+            supplied = request.get("token", "")
+            text = request.get("text", "")
+            if not authenticated:
+                if not isinstance(supplied, str) or not hmac.compare_digest(supplied, token):
+                    await ws.close(code=1008, reason="Invalid test token")
+                    return
+                authenticated = True
+            if not isinstance(text, str) or not 1 <= len(text.strip()) <= 180:
+                await ws.send_json({"type": "error", "message": "文本长度需要在 1 到 180 字之间。"})
+                continue
+            if generation_lock.locked():
+                await ws.send_json({"type": "error", "message": "Fairy 正在处理另一条请求，请稍后再试。"})
+                continue
+            async with generation_lock:
+                queue = asyncio.Queue()
+                worker = asyncio.create_task(asyncio.to_thread(generate, text.strip(), asyncio.get_running_loop(), queue))
+                await ws.send_json({"type": "started"})
+                while True:
+                    item = await queue.get()
+                    if item[0] == "audio":
+                        _, rate, pcm = item
+                        await ws.send_json({"type": "audio", "sample_rate": rate})
+                        await ws.send_bytes(pcm)
+                    elif item[0] == "done":
+                        await ws.send_json({"type": "done", **item[1]})
+                        break
+                    else:
+                        await ws.send_json({"type": "error", "message": item[1]})
+                        break
+                await worker
     except Exception as exc:
         print(f"WebSocket closed: {type(exc).__name__}: {exc}", flush=True)
     finally:
