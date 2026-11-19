@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fairy 异网语音测试</title>
+<style>
+  :root{color-scheme:dark;font-family:system-ui,"Microsoft YaHei",sans-serif;background:#090b1d;color:#e9edff}
+  body{max-width:680px;margin:0 auto;padding:30px 20px}
+  h1{font-size:25px;letter-spacing:.08em;color:#a7bdff}p{color:#abb6d8;line-height:1.7}
+  label{display:block;margin:20px 0 7px;color:#a7bdff}
+  input,textarea{box-sizing:border-box;width:100%;border:1px solid #4b5684;border-radius:12px;background:#151b37;color:#f5f7ff;padding:14px;font:inherit}
+  textarea{height:115px;resize:vertical}button{width:100%;margin-top:22px;border:0;border-radius:14px;background:#819ef3;color:#09112b;padding:15px;font-size:17px;font-weight:700}
+  button:disabled{opacity:.55}pre{white-space:pre-wrap;line-height:1.7;background:#111630;border-radius:12px;padding:16px;min-height:90px}
+</style>
+<h1>FAIRY // 异网语音测试</h1>
+<p>使用电脑端原版 Fairy 权重。请在手机关闭 Wi-Fi、使用移动数据时测试。首段到达时间包含网络传输和电脑推理。</p>
+<label for="token">临时测试令牌</label><input id="token" type="password" autocomplete="off">
+<label for="message">测试文本</label><textarea id="message">主人，语音模块已就绪。今天有什么任务需要本系统处理？</textarea>
+<button id="play">生成并播放</button><pre id="status">等待测试</pre>
+<script>
+const tokenInput=document.querySelector('#token');
+const fragment=new URLSearchParams(location.hash.slice(1));
+if(fragment.has('token')){tokenInput.value=fragment.get('token');history.replaceState(null,'',location.pathname)}
+const button=document.querySelector('#play'),status=document.querySelector('#status');
+button.onclick=async()=>{
+  button.disabled=true;
+  const ctx=new AudioContext(), start=performance.now();
+  await ctx.resume();
+  const ws=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/stream`);
+  ws.binaryType='arraybuffer';
+  let opened,firstByte,firstPlay,bytes=0,chunks=0,nextTime=ctx.currentTime,pendingRate=32000,done=false;
+  const show=(extra='')=>status.textContent=`连接: ${opened??'—'} ms\n首段到达: ${firstByte??'—'} ms\n首段排播: ${firstPlay??'—'} ms\n音频块: ${chunks}\n接收字节: ${bytes}\n${extra}`;
+  ws.onopen=()=>{opened=Math.round(performance.now()-start);ws.send(JSON.stringify({token:tokenInput.value,text:document.querySelector('#message').value}));show('电脑端推理中…')};
+  ws.onmessage=e=>{
+    if(typeof e.data==='string'){
+      const msg=JSON.parse(e.data);
+      if(msg.type==='audio')pendingRate=msg.sample_rate;
+      if(msg.type==='done'){done=true;show(`完整接收: ${Math.round(performance.now()-start)} ms\n电脑首段生成: ${msg.server_first_chunk_ms} ms\n电脑完整推理: ${msg.server_total_ms} ms\n音频长度: ${msg.audio_ms} ms`);button.disabled=false;ws.close()}
+      if(msg.type==='error'){show(`错误: ${msg.message}`);button.disabled=false}
+      return;
+    }
+    if(firstByte===undefined)firstByte=Math.round(performance.now()-start);
+    const pcm=new Int16Array(e.data),buffer=ctx.createBuffer(1,pcm.length,pendingRate),data=buffer.getChannelData(0);
+    for(let i=0;i<pcm.length;i++)data[i]=pcm[i]/32768;
+    const source=ctx.createBufferSource();source.buffer=buffer;source.connect(ctx.destination);
+    nextTime=Math.max(nextTime,ctx.currentTime+.035);source.start(nextTime);
+    if(firstPlay===undefined)firstPlay=Math.round(performance.now()-start);
+    nextTime+=buffer.duration;bytes+=e.data.byteLength;chunks++;show('播放中…');
+  };
+  ws.onerror=()=>show('连接或传输失败');
+  ws.onclose=e=>{if(!done){show(`连接关闭: ${e.code} ${e.reason}`);button.disabled=false}}
+};
+</script>
+</html>

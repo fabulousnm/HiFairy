@@ -22,3 +22,14 @@
 可用 `--text` 改测试句，`--text-split-method cut5` 按标点切分并分段返回，`--output-dir` 改输出目录。指标含模型加载、进程启动至模型就绪、首段生成、完整推理、音频长度、RTF、PyTorch 已分配显存峰值。首段生成时间是第一批 PCM 样本返回时间，不等于扬声器实际出声；当前未做异网传输测试。
 
 2026-11-19 的实测与试听文件见《../测试/Fairy-电脑端原版权重推理.md》。
+
+## 临时异网语音测试
+
+`fairy_runtime.py` 统一模型路径、加载和请求配置，供基准脚本及 `server.py` 复用。服务器只绑定 `127.0.0.1:8765`，启动时预热 Fairy 原版模型，随后通过 `/stream` WebSocket 分段发送 32 kHz、单声道、16 位 PCM。测试令牌首次启动时生成在忽略的 `vendor/remote-test-token.txt`，客户端需在首条消息中发送令牌和不超过 180 字的文本。
+
+```powershell
+& '<虚拟环境>\Scripts\python.exe' voice-pc\server.py
+& '<虚拟环境>\Scripts\python.exe' voice-pc\client_benchmark.py ws://127.0.0.1:8765/stream
+```
+
+手机测试页是 `web_test.html`。临时公网入口可用 cloudflared Quick Tunnel 连接本地服务；网址会变动，没有运行保证。网页的令牌可放在链接的 `#token=...` 片段中，页面读后会立即清除片段。该片段不随 HTTP 请求发送。公网入口用于实验，不作为正式部署；具体测量及局限见《../测试/Fairy-异网语音传输.md》。
