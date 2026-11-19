@@ -1,11 +1,14 @@
 package com.hifairy.ttslab
 
 import android.app.Activity
+import android.app.ActivityManager
+import android.app.ApplicationExitInfo
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
 import android.media.MediaPlayer
 import android.os.Bundle
+import android.os.Build
 import android.os.SystemClock
 import android.widget.Button
 import android.widget.EditText
@@ -21,6 +24,7 @@ class TtsLabActivity : Activity() {
     private lateinit var synthButton: Button
     private lateinit var referenceButton: Button
     private lateinit var status: TextView
+    private lateinit var diagnostics: TextView
     private var samplePlayer: MediaPlayer? = null
     @Volatile private var closed = false
 
@@ -45,12 +49,17 @@ class TtsLabActivity : Activity() {
         column.addView(referenceButton)
         status = TextView(this).apply { text = "正在加载本地模型…"; textSize = 16f; setTextColor(0xff9adce9.toInt()); setPadding(0, 18, 0, 0) }
         column.addView(status)
+        diagnostics = TextView(this).apply { text = lastExitReport(); textSize = 13f; setTextColor(0xffbfc9e3.toInt()); setPadding(0, 18, 0, 0) }
+        column.addView(diagnostics)
         setContentView(ScrollView(this).apply { setBackgroundColor(0xff090c1d.toInt()); addView(column) })
+        markStage("model_loading")
         worker.execute {
             try {
                 val loadMs = benchmark.load()
+                markStage("model_ready")
                 runOnUiThread { if (!closed) { status.text = "模型加载：${loadMs} ms。可输入文字测试冷/热推理。"; synthButton.isEnabled = true } }
             } catch (error: Throwable) {
+                markStage("model_load_error")
                 runOnUiThread { if (!closed) status.text = "模型加载失败：${error.message ?: error.javaClass.simpleName}" }
             }
         }
@@ -66,7 +75,9 @@ class TtsLabActivity : Activity() {
         worker.execute {
             var track: AudioTrack? = null
             try {
+                markStage("generating")
                 val output = benchmark.synthesize(text)
+                markStage("generated")
                 val metrics = output.metrics
                 val sampleRate = 24000
                 check(metrics.sampleRate == sampleRate) { "采样率不匹配：${metrics.sampleRate}" }
@@ -78,6 +89,7 @@ class TtsLabActivity : Activity() {
                     .setBufferSizeInBytes(maxOf(minimum, 9600))
                     .setTransferMode(AudioTrack.MODE_STREAM).build()
                 check(track.state == AudioTrack.STATE_INITIALIZED) { "音频轨道初始化失败" }
+                markStage("playing")
                 track.play()
                 val pcm = ShortArray(output.samples.size) { index -> (output.samples[index].coerceIn(-1f, 1f) * 32767f).toInt().toShort() }
                 var offset = 0
@@ -90,8 +102,10 @@ class TtsLabActivity : Activity() {
                 val remainingMs = ((pcm.size - played).coerceAtLeast(0L) * 1000L / sampleRate).coerceAtMost(30000L)
                 runOnUiThread { if (!closed) status.text = "首块生成：${metrics.firstChunkMs ?: "无"} ms\n完整推理：${metrics.inferenceMs} ms\n音频长度：${metrics.audioMs} ms\nRTF：${"%.2f".format(metrics.rtf)}\n正在播放…" }
                 SystemClock.sleep(remainingMs + 150)
+                markStage("completed")
                 runOnUiThread { if (!closed) { status.text = status.text.toString().replace("正在播放…", "播放完成"); synthButton.isEnabled = true; referenceButton.isEnabled = true } }
             } catch (error: Throwable) {
+                markStage("error: ${error.javaClass.simpleName}: ${error.message}")
                 runOnUiThread { if (!closed) { status.text = "合成失败：${error.message ?: error.javaClass.simpleName}"; synthButton.isEnabled = true; referenceButton.isEnabled = true } }
             } finally {
                 try { track?.stop() } catch (_: Exception) { }
@@ -111,6 +125,33 @@ class TtsLabActivity : Activity() {
             start()
         }
         status.text = "正在播放 Fairy 原声参考（非合成）"
+    }
+
+    private fun markStage(stage: String) {
+        getSharedPreferences("tts_diagnostics", MODE_PRIVATE).edit()
+            .putString("stage", stage).putLong("at", System.currentTimeMillis()).commit()
+    }
+
+    private fun lastExitReport(): String {
+        val prefs = getSharedPreferences("tts_diagnostics", MODE_PRIVATE)
+        val stage = prefs.getString("stage", "无")
+        if (Build.VERSION.SDK_INT < 30) return "上次阶段：$stage；系统未提供退出原因 API"
+        return try {
+            val manager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+            val info = manager.getHistoricalProcessExitReasons(packageName, 0, 5).firstOrNull()
+            if (info == null) "上次阶段：$stage；尚无系统退出记录" else {
+                val reason = when (info.reason) {
+                    ApplicationExitInfo.REASON_CRASH -> "Java 崩溃"
+                    ApplicationExitInfo.REASON_CRASH_NATIVE -> "原生崩溃"
+                    ApplicationExitInfo.REASON_LOW_MEMORY -> "内存不足被杀"
+                    ApplicationExitInfo.REASON_ANR -> "无响应"
+                    ApplicationExitInfo.REASON_EXIT_SELF -> "应用主动退出"
+                    else -> "代码 ${info.reason}"
+                }
+                val trace = info.traceInputStream?.use { String(it.readNBytes(4096), Charsets.UTF_8) }
+                "上次阶段：$stage\n系统退出：$reason；状态 ${info.status}\n时间：${java.util.Date(info.timestamp)}\n${trace.orEmpty().take(1200)}"
+            }
+        } catch (error: Exception) { "上次阶段：$stage；退出信息不可读：${error.javaClass.simpleName}" }
     }
 
     override fun onDestroy() {
