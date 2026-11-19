@@ -246,6 +246,12 @@ private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String
                     MarkdownMessage(message.content.ifBlank { "正在思考…" }, Modifier.fillMaxWidth())
                 }
             }
+            if (isUser && message.attachments.isNotEmpty()) {
+                message.attachments.forEach { attachment ->
+                    Text("▣ ${attachment.name}", color = ThemeTokens.accent, fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 5.dp).background(ThemeTokens.surface, RoundedCornerShape(10.dp)).padding(horizontal = 10.dp, vertical = 7.dp))
+                }
+            }
             if (!isUser && message.citations.isNotEmpty()) {
                 Text("参考来源", color = ThemeTokens.secondary, fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp, bottom = 3.dp))
                 message.citations.forEachIndexed { index, citation ->
@@ -342,8 +348,26 @@ class MainActivity : ComponentActivity() {
     private var historyMenuId by mutableLongStateOf(0L)
     private var renameDraft by mutableStateOf("")
     private var editingMessageIndex by mutableIntStateOf(-1)
+    private val editingAttachments = mutableStateListOf<ChatAttachment>()
     private var sending by mutableStateOf(false)
     private var webSearch by mutableStateOf(false)
+    private val pendingAttachments = mutableStateListOf<PendingAttachment>()
+    private val pickAttachments = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isEmpty()) return@registerForActivityResult
+        if (secureSettings.model != "deepseek-flash") { Toast.makeText(this, "附件需在设置中选择 deepseek-flash 模型", Toast.LENGTH_LONG).show(); return@registerForActivityResult }
+        val apiKey = secureSettings.apiKey()
+        if (apiKey.isBlank()) { Toast.makeText(this, "请先配置 DeepSeek API Key", Toast.LENGTH_LONG).show(); return@registerForActivityResult }
+        val uploader = DeepSeekFileUploader(contentResolver)
+        uris.take((5 - pendingAttachments.size).coerceAtLeast(0)).forEach { uri ->
+            val selected = PendingAttachment(uri, uploader.name(uri))
+            pendingAttachments.add(selected)
+            Thread {
+                val updated = try { selected.copy(state = "已就绪", fileId = uploader.upload(uri, selected.name, apiKey)) }
+                    catch (error: Exception) { selected.copy(state = "上传失败：${error.message}") }
+                runOnUiThread { val index = pendingAttachments.indexOfFirst { it.uri == uri }; if (index >= 0) pendingAttachments[index] = updated }
+            }.start()
+        }
+    }
     private lateinit var secureSettings: SecureSettings
     private var keyDraft by mutableStateOf("")
     private var modelDraft by mutableStateOf("deepseek-flash")
@@ -549,7 +573,7 @@ class MainActivity : ComponentActivity() {
                                                 showEdit = index == messages.indexOfLast { it.role == "user" } && !sending,
                                                 playing = playingSessionId == currentSessionId && playingMessageIndex == index,
                                                 onCopy = { (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Fairy 回答", message.content)) },
-                                                onEdit = { stopGeneration(); editingMessageIndex = index; draft = message.content },
+                                                onEdit = { stopGeneration(); editingMessageIndex = index; draft = message.content; editingAttachments.clear(); editingAttachments.addAll(message.attachments) },
                                                 onRegenerate = { regenerate() },
                                                 onReplay = { if (playingSessionId == currentSessionId && playingMessageIndex == index) stopSpeech() else playAnswer(index) })
                                         }
@@ -595,15 +619,34 @@ class MainActivity : ComponentActivity() {
                             }
                         } else {
                             Column(Modifier.fillMaxWidth()) {
-                            Text(if (webSearch) "◎ 联网搜索已开" else "◎ 联网搜索", color = if (webSearch) ThemeTokens.accent else ThemeTokens.secondary,
-                                fontSize = 12.sp, modifier = Modifier.padding(bottom = 6.dp).background(if (webSearch) ThemeTokens.reasoningBubble else ThemeTokens.surface, RoundedCornerShape(12.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 6.dp)) {
+                            Text(if (webSearch) "◎ 已接入绳网" else "◎ 接入绳网", color = if (webSearch) ThemeTokens.accent else ThemeTokens.secondary,
+                                fontSize = 12.sp, modifier = Modifier.background(if (webSearch) ThemeTokens.reasoningBubble else ThemeTokens.surface, RoundedCornerShape(12.dp))
                                     .border(1.dp, if (webSearch) ThemeTokens.accent else ThemeTokens.secondary, RoundedCornerShape(12.dp))
                                     .clickable { webSearch = !webSearch; secureSettings.webSearch = webSearch }.padding(horizontal = 12.dp, vertical = 7.dp))
+                            Text("＋ 附件", color = ThemeTokens.accent, fontSize = 12.sp,
+                                modifier = Modifier.background(ThemeTokens.surface, RoundedCornerShape(12.dp))
+                                    .border(1.dp, ThemeTokens.secondary, RoundedCornerShape(12.dp))
+                                    .clickable { pickAttachments.launch(arrayOf("*/*")) }.padding(horizontal = 12.dp, vertical = 7.dp))
+                            }
+                            pendingAttachments.forEach { attachment ->
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
+                                    Text("▣ ${attachment.name} · ${attachment.state}", color = if (attachment.fileId.isNotBlank()) ThemeTokens.accent else ThemeTokens.secondary,
+                                        fontSize = 11.sp, maxLines = 1, modifier = Modifier.weight(1f))
+                                    Text("✕", color = ThemeTokens.secondary, modifier = Modifier.clickable { pendingAttachments.remove(attachment) }.padding(horizontal = 8.dp))
+                                }
+                            }
+                            editingAttachments.forEach { attachment ->
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
+                                    Text("▣ ${attachment.name} · 已附上", color = ThemeTokens.accent, fontSize = 11.sp, maxLines = 1, modifier = Modifier.weight(1f))
+                                    Text("✕", color = ThemeTokens.secondary, modifier = Modifier.clickable { editingAttachments.remove(attachment) }.padding(horizontal = 8.dp))
+                                }
+                            }
                             Row(Modifier.fillMaxWidth().background(if (editingMessageIndex >= 0) Color(0xFF1C2549) else ThemeTokens.surface, RoundedCornerShape(18.dp)).border(if (editingMessageIndex >= 0) 1.dp else 0.dp, ThemeTokens.accent, RoundedCornerShape(18.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 if (editingMessageIndex >= 0) ActionGlyph("edit", ThemeTokens.accent, Modifier.padding(start = 8.dp))
                                 if (editingMessageIndex < 0) MessageAction("mic", "切换语音输入", { voiceMode = true; if (microphoneGranted) voiceInput.prepare() else requestMicrophone.launch(Manifest.permission.RECORD_AUDIO) }, ThemeTokens.accent)
                                 TextField(value = draft, onValueChange = { draft = it }, placeholder = { Text("向 Fairy 提问…", color = ThemeTokens.secondary) }, modifier = Modifier.weight(1f), colors = TextFieldDefaults.colors(focusedTextColor = ThemeTokens.text, unfocusedTextColor = ThemeTokens.text, cursorColor = ThemeTokens.accent, focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
-                                if (editingMessageIndex >= 0) MessageAction("cancel", "取消编辑", { editingMessageIndex = -1; draft = "" }, ThemeTokens.text)
+                                if (editingMessageIndex >= 0) MessageAction("cancel", "取消编辑", { editingMessageIndex = -1; editingAttachments.clear(); draft = "" }, ThemeTokens.text)
                                 Text(if (sending) "■" else "➤", color = ThemeTokens.accent, fontSize = 25.sp, modifier = Modifier.clickable { if (sending) stopGeneration() else sendMessage() })
                             }
                             }
@@ -788,8 +831,9 @@ class MainActivity : ComponentActivity() {
 
     private fun sendMessage() {
         val input = draft.trim()
-        if (input.isEmpty() || sending) return
-        if (webSearch && secureSettings.model != "deepseek-flash") { Toast.makeText(this, "联网搜索需在设置中选择 deepseek-flash 模型", Toast.LENGTH_LONG).show(); return }
+        if ((input.isEmpty() && pendingAttachments.isEmpty() && editingAttachments.isEmpty()) || sending) return
+        if (pendingAttachments.any { it.fileId.isBlank() }) { Toast.makeText(this, "请等待附件上传完成，失败的附件可移除后重选", Toast.LENGTH_LONG).show(); return }
+        if ((webSearch || pendingAttachments.isNotEmpty() || editingAttachments.isNotEmpty()) && secureSettings.model != "deepseek-flash") { Toast.makeText(this, "绳网和附件需在设置中选择 deepseek-flash 模型", Toast.LENGTH_LONG).show(); return }
         if (secureSettings.apiKey().isEmpty()) { settingsFromHistory = false; page = "settings"; status = "请先配置 DeepSeek API Key"; return }
         draft = ""
         if (editingMessageIndex >= 0) {
@@ -799,7 +843,9 @@ class MainActivity : ComponentActivity() {
                 while (messages.size > index) messages.removeAt(messages.lastIndex)
             }
         }
-        messages.add(ChatMessage("user", input))
+        messages.add(ChatMessage("user", input.ifBlank { "请分析这些附件。" }, attachments = editingAttachments.toList() + pendingAttachments.map { ChatAttachment(it.name, it.fileId) }))
+        editingAttachments.clear()
+        pendingAttachments.clear()
         if (currentSessionId == 0L) currentSessionId = System.currentTimeMillis()
         saveCurrentSession()
         beginGeneration()
@@ -880,6 +926,8 @@ class MainActivity : ComponentActivity() {
         messages.clear()
         currentSessionId = 0L
         editingMessageIndex = -1
+        editingAttachments.clear()
+        pendingAttachments.clear()
         draft = ""
         page = "chat"
     }
@@ -894,6 +942,8 @@ class MainActivity : ComponentActivity() {
         messages.addAll(session.messages)
         currentSessionId = session.id
         editingMessageIndex = -1
+        editingAttachments.clear()
+        pendingAttachments.clear()
         page = "chat"
     }
 

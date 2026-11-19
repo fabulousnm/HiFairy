@@ -13,7 +13,11 @@ class DeepSeekClient {
     fun stream(apiKey: String, model: String, effort: String, history: List<ChatMessage>, webSearch: Boolean, onText: (String) -> Unit, onReasoning: (String) -> Unit): Pair<List<ChatCitation>, String> {
         val messages = JSONArray()
         history.forEach { message ->
-            messages.put(JSONObject().put("role", message.role).put("content", message.content).apply {
+            val content: Any = if (message.role == "user" && message.attachments.isNotEmpty()) JSONArray().apply {
+                message.attachments.forEach { put(JSONObject().put("type", "file").put("file_id", it.fileId)) }
+                put(JSONObject().put("type", "text").put("text", message.content.ifBlank { "请分析这些附件。" }))
+            } else message.content
+            messages.put(JSONObject().put("role", message.role).put("content", content).apply {
                 if (message.role == "assistant" && message.serverToolCalls.isNotBlank()) put("server_tool_calls", JSONArray(message.serverToolCalls))
             })
         }
