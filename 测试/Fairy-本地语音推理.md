@@ -15,3 +15,5 @@
 构建：先运行 `./tts-lab/prepare-voice.ps1` 下载并校验模型/声码器，复制参考音频；`voice-lab/vendor/sherpa-static.aar` 由 `./voice-lab/prepare-models.ps1` 准备。然后运行 `./gradlew.bat :tts-lab:assembleDebug`。APK 位于 `tts-lab/build/outputs/apk/debug/tts-lab-debug.apk`，约 179 MB。模型与参考音频保存在 Git 忽略路径，不提交大文件。
 
 验证：APK 构建通过，包内模型、参考音频和 arm64 JNI 库齐全。使用相同资源的 Windows CPU 静默合成检查成功：短句「主人，本系统已经就绪。」生成 49,387 个 24 kHz 样本，模型加载约 1,860 ms、完整推理约 1,875 ms、RTF 约 0.91。这些是电脑指标，**不能代替 nova 14 的推理延迟或音色评价**。当前 ADB 没有设备，真机结果仍待测试。
+
+2026-11-19 用户反馈 nova 14 上启动本地推理时闪退。此前的构建成功和 Windows CPU 结果不能代表手机推理已通过。由于缺少崩溃日志，原因尚未定位；对手机端与电脑端的可行性比较见《../调研/2026-11-19-Fairy-语音推理部署比较.md》。
