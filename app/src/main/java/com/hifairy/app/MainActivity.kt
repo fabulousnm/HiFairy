@@ -170,6 +170,12 @@ private object DrawerMotion {
     val settle = spring<Float>(dampingRatio = damping, stiffness = Spring.StiffnessMediumLow)
 }
 
+private object ThemeMotion {
+    const val revealMs = 520
+    const val messageMs = 300
+    const val greetingDelayMs = 160L
+}
+
 private fun greetingForHour(hour: Int): String = when (hour) {
     in 5..11 -> "早上好，主人"
     in 12..17 -> "下午好，主人"
@@ -338,11 +344,13 @@ private fun MessageAction(kind: String, label: String, onClick: () -> Unit, colo
 }
 
 @Composable
-private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String, showRegenerate: Boolean, showContinue: Boolean, showEdit: Boolean, playing: Boolean, onCopy: () -> Unit, onEdit: () -> Unit, onRegenerate: () -> Unit, onContinue: () -> Unit, onReplay: () -> Unit) {
+private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String, showRegenerate: Boolean, showContinue: Boolean, showEdit: Boolean, playing: Boolean, animateEntrance: Boolean, onCopy: () -> Unit, onEdit: () -> Unit, onRegenerate: () -> Unit, onContinue: () -> Unit, onReplay: () -> Unit) {
     val isUser = message.role == "user"
     val context = LocalContext.current
     var reasoningExpanded by remember { mutableStateOf(false) }
-    Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Top) {
+    val entrance = remember { Animatable(if (animateEntrance) 0f else 1f) }
+    LaunchedEffect(Unit) { if (animateEntrance) entrance.animateTo(1f, tween(ThemeMotion.messageMs, easing = FastOutSlowInEasing)) }
+    Row(Modifier.fillMaxWidth().padding(vertical = 9.dp).graphicsLayer { alpha = entrance.value; translationY = (1f - entrance.value) * 12.dp.toPx() }, horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Top) {
         if (!isUser) ChatAvatar("assistant", avatar, Modifier.size(36.dp))
         Column(Modifier.widthIn(max = 300.dp).padding(horizontal = 8.dp), horizontalAlignment = if (isUser) Alignment.End else Alignment.Start) {
             Text(if (isUser) displayName else "Fairy", color = ThemeTokens.secondary, fontSize = 11.sp, fontFamily = TypeTokens.terminalFont, modifier = Modifier.padding(bottom = 5.dp))
@@ -399,7 +407,13 @@ private fun darkFieldColors() = TextFieldDefaults.colors(
 
 @Composable
 private fun SettingsCard(eyebrow: String, title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxWidth().background(ThemeTokens.surface, RoundedCornerShape(20.dp)).border(1.dp, Color(0xFF25335C), RoundedCornerShape(20.dp)).padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    val shape = RoundedCornerShape(20.dp)
+    Column(Modifier.fillMaxWidth().shadow(8.dp, shape, ambientColor = Color(0xB8020618), spotColor = Color(0x99020618))
+        .background(ThemeTokens.surface, shape).border(1.dp, Color(0xFF34436D), shape)
+        .drawWithContent {
+            drawContent()
+            drawLine(Color(0x665E7AB4), Offset(20.dp.toPx(), 1.dp.toPx()), Offset(size.width - 20.dp.toPx(), 1.dp.toPx()), 1.dp.toPx())
+        }.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(eyebrow, color = ThemeTokens.accent, fontSize = 10.sp, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.eyebrowTracking)
         Text(title, color = ThemeTokens.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
         content()
@@ -724,18 +738,31 @@ class MainActivity : ComponentActivity() {
                     "chat" -> {
                         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                             val hasConversation = messages.isNotEmpty()
+                            val chatReveal = remember { Animatable(0f) }
+                            val greetingReveal = remember { Animatable(0f) }
+                            LaunchedEffect(hasConversation) {
+                                if (hasConversation) chatReveal.animateTo(1f, tween(ThemeMotion.revealMs, delayMillis = 140, easing = FastOutSlowInEasing))
+                                else chatReveal.snapTo(0f)
+                            }
+                            LaunchedEffect(introPhase, hasConversation) {
+                                if (!hasConversation && (introPhase == "greeting" || introPhase == "ready")) {
+                                    if (introPhase == "greeting") greetingReveal.snapTo(0f)
+                                    kotlinx.coroutines.delay(ThemeMotion.greetingDelayMs)
+                                    greetingReveal.animateTo(1f, tween(ThemeMotion.revealMs, easing = FastOutSlowInEasing))
+                                } else greetingReveal.snapTo(0f)
+                            }
                             val eyeSize by animateDpAsState(if (hasConversation) 54.dp else 154.dp, tween(550), label = "eye size")
                             val eyeX by animateDpAsState(if (hasConversation) 0.dp else (maxWidth - eyeSize) / 2, tween(550), label = "eye x")
                             val eyeY by animateDpAsState(if (hasConversation) 28.dp else (maxHeight - eyeSize) / 2, tween(550), label = "eye y")
                             FairyEye(Modifier.offset(eyeX, eyeY).size(eyeSize).semantics { contentDescription = "Fairy 眼徽" }, active = sending && !generationPaused, completionToken = eyeCompletionToken)
                             if (hasConversation) {
-                                Text("FAIRY // ONLINE", color = ThemeTokens.accent, fontSize = 10.sp, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.eyebrowTracking, modifier = Modifier.offset(70.dp, 46.dp))
+                                Text("FAIRY // ONLINE", color = ThemeTokens.accent, fontSize = 10.sp, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.eyebrowTracking, modifier = Modifier.offset(70.dp, 46.dp).graphicsLayer { alpha = chatReveal.value })
                                 val scrollState = rememberScrollState()
                                 LaunchedEffect(messages.size) { scrollState.animateScrollTo(scrollState.maxValue) }
                                 LaunchedEffect(messages.lastOrNull()) {
                                     if (!scrollState.isScrollInProgress && scrollState.maxValue - scrollState.value < 120) scrollState.scrollTo(scrollState.maxValue)
                                 }
-                                Column(Modifier.fillMaxSize().padding(top = 94.dp).verticalScroll(scrollState).padding(bottom = 16.dp)) {
+                                Column(Modifier.fillMaxSize().padding(top = 94.dp).graphicsLayer { alpha = chatReveal.value; translationY = (1f - chatReveal.value) * 16.dp.toPx() }.verticalScroll(scrollState).padding(bottom = 16.dp)) {
                                     messages.forEachIndexed { index, message ->
                                         key(currentSessionId, index) {
                                             ChatBubble(message, displayNameDraft, avatarChoice,
@@ -743,6 +770,7 @@ class MainActivity : ComponentActivity() {
                                                 showContinue = index == messages.lastIndex && (generationPaused || message.canContinue) && !message.content.startsWith("请求失败："),
                                                 showEdit = index == messages.indexOfLast { it.role == "user" } && !sending,
                                                 playing = playingSessionId == currentSessionId && playingMessageIndex == index,
+                                                animateEntrance = index >= messages.size - 2,
                                                 onCopy = { (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Fairy 回答", message.content)) },
                                                 onEdit = { stopGeneration(); editingMessageIndex = index; draft = message.content; editingAttachments.clear(); editingAttachments.addAll(message.attachments) },
                                                 onRegenerate = { regenerate() },
@@ -752,7 +780,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             } else {
-                                Text(greetingForHour(greetingHour), color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, letterSpacing = TypeTokens.labelTracking, modifier = Modifier.align(Alignment.Center).offset(y = eyeSize / 2 + 42.dp))
+                                Text(greetingForHour(greetingHour), color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, letterSpacing = TypeTokens.labelTracking, modifier = Modifier.align(Alignment.Center).offset(y = eyeSize / 2 + 42.dp).graphicsLayer { alpha = greetingReveal.value; translationY = (1f - greetingReveal.value) * 12.dp.toPx() })
                             }
                         }
                         if (voiceMode && editingMessageIndex < 0) {
@@ -814,12 +842,20 @@ class MainActivity : ComponentActivity() {
                                     Text("✕", color = ThemeTokens.secondary, modifier = Modifier.clickable { editingAttachments.remove(attachment) }.padding(horizontal = 8.dp))
                                 }
                             }
-                            Row(Modifier.fillMaxWidth().background(if (editingMessageIndex >= 0) Color(0xFF1C2549) else ThemeTokens.surface, RoundedCornerShape(18.dp)).border(if (editingMessageIndex >= 0) 1.dp else 0.dp, ThemeTokens.accent, RoundedCornerShape(18.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            val hasOutgoing = draft.isNotBlank() || pendingAttachments.isNotEmpty() || editingAttachments.isNotEmpty()
+                            val composerRim by animateColorAsState(
+                                if (editingMessageIndex >= 0) ThemeTokens.accent else if (hasOutgoing) Color(0xFF5775B5) else Color(0xFF293653),
+                                tween(220), label = "composer rim"
+                            )
+                            val composerShape = RoundedCornerShape(18.dp)
+                            Row(Modifier.fillMaxWidth().shadow(if (hasOutgoing || editingMessageIndex >= 0) 9.dp else 4.dp, composerShape,
+                                ambientColor = Color(0x99020413), spotColor = Color(0x99020413))
+                                .background(if (editingMessageIndex >= 0) Color(0xFF1C2549) else ThemeTokens.surface, composerShape)
+                                .border(1.dp, composerRim, composerShape).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 if (editingMessageIndex >= 0) ActionGlyph("edit", ThemeTokens.accent, Modifier.padding(start = 8.dp))
                                 if (editingMessageIndex < 0) MessageAction("mic", "切换语音输入", { voiceMode = true; if (microphoneGranted) voiceInput.prepare() else requestMicrophone.launch(Manifest.permission.RECORD_AUDIO) }, ThemeTokens.accent)
                                 TextField(value = draft, onValueChange = { draft = it }, placeholder = { Text("向 Fairy 提问…", color = ThemeTokens.secondary) }, modifier = Modifier.weight(1f), colors = TextFieldDefaults.colors(focusedTextColor = ThemeTokens.text, unfocusedTextColor = ThemeTokens.text, cursorColor = ThemeTokens.accent, focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
                                 if (editingMessageIndex >= 0) MessageAction("cancel", "取消编辑", { editingMessageIndex = -1; editingAttachments.clear(); draft = "" }, ThemeTokens.text)
-                                val hasOutgoing = draft.isNotBlank() || pendingAttachments.isNotEmpty() || editingAttachments.isNotEmpty()
                                 Text(if (sending && !generationPaused && !hasOutgoing) "■" else "➤", color = ThemeTokens.accent, fontSize = 25.sp,
                                     modifier = Modifier.clickable { if (hasOutgoing) sendMessage() else if (sending && !generationPaused) pauseGeneration() })
                             }
