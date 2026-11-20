@@ -1,0 +1,6 @@
+- insert:
+    - id: hifairy-host-probe
+      name: hifairy-dsh-host-probe
+      config:
+        tokenFile: D:/dsh-data/hifairy-agent-probe.token
+        port: 18765
