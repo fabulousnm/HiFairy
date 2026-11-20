@@ -182,12 +182,6 @@ private fun greetingAudioForHour(hour: Int): Int = when (hour) {
     else -> R.raw.fairy_greet_evening
 }
 
-private fun greetingSubtitleForHour(hour: Int): String = when (hour) {
-    in 5..11 -> "Fairy 已就位，今天的日程也已就位。"
-    in 12..17 -> "H.D.D 在线，摸鱼请自便。"
-    else -> "夜班系统已启动，本系统不困。"
-}
-
 private object TypeTokens {
     val interfaceFont = FontFamily.SansSerif
     val terminalFont = FontFamily.Monospace
@@ -626,6 +620,7 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(introPhase) {
                 if (introPhase == "boot") requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
                 if (introPhase == "transition") {
+                    bootVideo?.pause()
                     curtain.animateTo(1f, tween(320))
                     bootVideo?.stopPlayback()
                     bootVideo = null
@@ -633,15 +628,21 @@ class MainActivity : ComponentActivity() {
                     kotlinx.coroutines.delay(380)
                     introPhase = "greeting"
                     scope.launch { curtain.animateTo(0f, tween(380)) }
+                    return@LaunchedEffect
                 }
                 if (introPhase == "greeting") {
                     greetingHour = LocalTime.now().hour
+                    greetingPlayer?.release()
+                    greetingPlayer = null
                     val player = MediaPlayer.create(this@MainActivity, greetingAudioForHour(greetingHour))
                     greetingPlayer = player
                     if (player != null) {
-                        player.start()
-                        kotlinx.coroutines.delay(player.duration.toLong().coerceAtMost(13000L) + 900L)
-                        if (greetingPlayer === player) { player.release(); greetingPlayer = null }
+                        try {
+                            player.start()
+                            kotlinx.coroutines.delay(player.duration.toLong().coerceAtMost(13000L) + 900L)
+                        } finally {
+                            if (greetingPlayer === player) { player.release(); greetingPlayer = null }
+                        }
                     } else kotlinx.coroutines.delay(2100)
                     introPhase = "ready"
                 }
@@ -678,12 +679,15 @@ class MainActivity : ComponentActivity() {
                         factory = { VideoView(it).apply {
                             bootVideo = this
                             setVideoURI(android.net.Uri.parse("android.resource://${context.packageName}/${R.raw.fairy_boot}"))
+                            setOnPreparedListener { media ->
+                                media.setVolume(1f, 1f)
+                                if (introPhase == "boot") start() else stopPlayback()
+                            }
                             setOnCompletionListener { if (introPhase == "boot") introPhase = "transition" }
-                            start()
                         } },
                         modifier = Modifier.fillMaxSize()
                     )
-                    if (introPhase == "boot") Text("SKIP", color = Color(0xD9CEF0FF), fontSize = 10.sp, fontFamily = TypeTokens.interfaceFont, letterSpacing = 2.6.sp, modifier = Modifier.align(Alignment.TopEnd).padding(20.dp).background(Color(0x8C061022)).border(1.dp, Color(0x616EDCFF)).clickable { introPhase = "transition" }.padding(horizontal = 14.dp, vertical = 7.dp))
+                    if (introPhase == "boot") Text("SKIP", color = Color(0xD9CEF0FF), fontSize = 10.sp, fontFamily = TypeTokens.interfaceFont, letterSpacing = 2.6.sp, modifier = Modifier.align(Alignment.TopEnd).padding(20.dp).background(Color(0x8C061022)).border(1.dp, Color(0x616EDCFF)).clickable { bootVideo?.pause(); introPhase = "transition" }.padding(horizontal = 14.dp, vertical = 7.dp))
                 }
             } else {
             Column(Modifier.offset(x = chatOffset).graphicsLayer {
@@ -747,10 +751,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             } else {
-                                Column(Modifier.align(Alignment.Center).offset(y = eyeSize / 2 + 52.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text(greetingForHour(greetingHour), color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, letterSpacing = TypeTokens.labelTracking)
-                                    Text(greetingSubtitleForHour(greetingHour), color = ThemeTokens.secondary, fontSize = 13.sp, fontFamily = TypeTokens.interfaceFont, modifier = Modifier.padding(top = 12.dp))
-                                }
+                                Text(greetingForHour(greetingHour), color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, letterSpacing = TypeTokens.labelTracking, modifier = Modifier.align(Alignment.Center).offset(y = eyeSize / 2 + 42.dp))
                             }
                         }
                         if (voiceMode && editingMessageIndex < 0) {
