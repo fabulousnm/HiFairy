@@ -73,4 +73,4 @@ Fairy 原头像 PNG 的主体约占画面宽度六成。上版单纯放大到 1.
 
 ## 应用启动图标（2026-11-20）
 
-启动图标取自已纳入仓库的 `references/fairy-zzz-plugin/icon.svg`，通过 `tools/generate-launcher-icon.py` 按 Android 五档密度生成常规 PNG；自适应图标使用透明眼徽前景与统一的深蓝背景，避免圆形启动器裁切眼球。`AndroidManifest.xml` 已设置图标和圆形图标。生成结果经图像预览和 APK 资源检查，构建通过；卓易通桌面显示仍需真机确认。
+启动图标取自已纳入仓库的 `references/fairy-zzz-plugin/icon.svg`，通过 `tools/generate-launcher-icon.py` 按 Android 五档密度生成常规 PNG；自适应图标使用透明眼徽前景与白色背景。眼徽居中，四周留白，避免桌面图标裁切。`AndroidManifest.xml` 已设置图标和圆形图标。生成结果经图像预览和 APK 资源检查，构建通过；卓易通桌面显示仍需真机确认。

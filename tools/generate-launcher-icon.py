@@ -34,15 +34,17 @@ def save_sizes(image: Image.Image, name: str) -> None:
 
 def main() -> None:
     svg = SOURCE.read_bytes()
-    save_sizes(render(svg), "ic_launcher.png")
-
     root = ET.fromstring(svg)
-    # The adaptive foreground contains only the eye; Android supplies the dark background.
+    # Keep only the eye and leave generous white space around it.
     for child in list(root):
         if child.tag == f"{{{SVG_NS}}}rect":
             root.remove(child)
-    root.set("viewBox", "-10 -10 84 84")
-    save_sizes(render(ET.tostring(root)), "ic_launcher_foreground.png")
+    root.set("viewBox", "-14 -14 92 92")
+    foreground = render(ET.tostring(root))
+    legacy = Image.new("RGBA", (MASTER_SIZE, MASTER_SIZE), "white")
+    legacy.alpha_composite(foreground)
+    save_sizes(legacy, "ic_launcher.png")
+    save_sizes(foreground, "ic_launcher_foreground.png")
 
 
 if __name__ == "__main__":
