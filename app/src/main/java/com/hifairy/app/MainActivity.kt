@@ -50,6 +50,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.Text
@@ -183,7 +184,9 @@ private object ThemeMotion {
 }
 
 private object ThemeDimensions {
-    const val fairyAvatarScale = 1.58f
+    const val fairyAvatarScale = 1.38f
+    const val fairyAvatarShiftX = -0.035f
+    const val fairyAvatarShiftY = -0.065f
     const val userAvatarScale = 1.14f
 }
 
@@ -297,10 +300,17 @@ private fun ChatAvatar(role: String, avatar: String, modifier: Modifier = Modifi
     }
     Box(modifier.aspectRatio(1f).shadow(if (role == "assistant") 5.dp else 2.dp, CircleShape)
         .clip(CircleShape).border(1.dp, if (role == "assistant") ThemeTokens.accent.copy(alpha = .7f) else ThemeTokens.secondary.copy(alpha = .35f), CircleShape), contentAlignment = Alignment.Center) {
-        val imageModifier = Modifier.fillMaxSize().scale(
-            if (role == "assistant") ThemeDimensions.fairyAvatarScale
-            else if (custom == null) ThemeDimensions.userAvatarScale else 1f
-        )
+        val imageModifier = Modifier.fillMaxSize().graphicsLayer {
+            if (role == "assistant") {
+                scaleX = ThemeDimensions.fairyAvatarScale
+                scaleY = ThemeDimensions.fairyAvatarScale
+                translationX = size.width * ThemeDimensions.fairyAvatarShiftX
+                translationY = size.height * ThemeDimensions.fairyAvatarShiftY
+            } else if (custom == null) {
+                scaleX = ThemeDimensions.userAvatarScale
+                scaleY = ThemeDimensions.userAvatarScale
+            }
+        }
         if (custom != null) Image(custom, contentDescription = "我的头像", modifier = imageModifier, contentScale = ContentScale.Crop)
         else Image(painterResource(resource), contentDescription = if (role == "assistant") "Fairy 眼徽" else "我的头像", modifier = imageModifier, contentScale = ContentScale.Crop)
     }
@@ -500,6 +510,11 @@ private fun SettingsCard(eyebrow: String, title: String, content: @Composable Co
         Text(title, color = ThemeTokens.text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
         content()
     }
+}
+
+@Composable
+private fun ThemeButton(onClick: () -> Unit, content: @Composable RowScope.() -> Unit) {
+    Button(onClick = onClick, colors = ButtonDefaults.buttonColors(containerColor = ThemeTokens.accent, contentColor = ThemeTokens.background), content = content)
 }
 
 @Composable
@@ -972,7 +987,7 @@ class MainActivity : ComponentActivity() {
                                 Text("API KEY", color = ThemeTokens.secondary, fontSize = 11.sp, fontFamily = TypeTokens.terminalFont)
                                 TextField(value = keyDraft, onValueChange = { keyDraft = it }, visualTransformation = PasswordVisualTransformation(), placeholder = { Text(if (secureSettings.apiKey().isEmpty()) "输入 API Key" else "已保存 · 输入新 Key 可替换", color = ThemeTokens.secondary) }, modifier = Modifier.fillMaxWidth(), colors = darkFieldColors())
                                 Text("密钥仅保存在本机的加密存储中", color = ThemeTokens.secondary, fontSize = 12.sp)
-                                Button(onClick = { if (keyDraft.isNotBlank()) { secureSettings.saveApiKey(keyDraft.trim()); keyDraft = ""; status = "API Key 已加密保存"; modelsRefresh++ } }) { Text("保存密钥") }
+                                ThemeButton(onClick = { if (keyDraft.isNotBlank()) { secureSettings.saveApiKey(keyDraft.trim()); keyDraft = ""; status = "API Key 已加密保存"; modelsRefresh++ } }) { Text("保存密钥") }
                             }
                             SettingsCard("MODEL // RESPONSE", "回答偏好") {
                                 Text("模型", color = ThemeTokens.secondary, fontSize = 12.sp)
@@ -1009,7 +1024,7 @@ class MainActivity : ComponentActivity() {
                                 TextField(value = voiceEndpointDraft, onValueChange = { voiceEndpointDraft = it }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = darkFieldColors())
                                 Text("语音服务令牌", color = ThemeTokens.secondary, fontSize = 12.sp)
                                 TextField(value = voiceTokenDraft, onValueChange = { voiceTokenDraft = it }, visualTransformation = PasswordVisualTransformation(), placeholder = { Text(if (secureSettings.voiceToken().isBlank()) "输入令牌" else "已保存 · 留空保持原令牌", color = ThemeTokens.secondary) }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = darkFieldColors())
-                                Button(onClick = {
+                                ThemeButton(onClick = {
                                     val endpoint = voiceEndpointDraft.trim()
                                     if (!endpoint.startsWith("wss://") || !endpoint.endsWith("/stream")) {
                                         Toast.makeText(this@MainActivity, "地址应为 wss://…/stream", Toast.LENGTH_SHORT).show()
@@ -1025,8 +1040,8 @@ class MainActivity : ComponentActivity() {
                             SettingsCard("DATA // ARCHIVE", "会话备份") {
                                 Text("将本机历史保存为 JSON，或从备份合并导入。API Key 与语音令牌不会导出。", color = ThemeTokens.secondary, fontSize = 12.sp)
                                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Button(onClick = { exportChats.launch("HiFairy-conversations.json") }) { Text("导出会话") }
-                                    Button(onClick = { importChats.launch(arrayOf("application/json", "text/plain")) }) { Text("导入会话") }
+                                    ThemeButton(onClick = { exportChats.launch("HiFairy-conversations.json") }) { Text("导出会话") }
+                                    ThemeButton(onClick = { importChats.launch(arrayOf("application/json", "text/plain")) }) { Text("导入会话") }
                                 }
                             }
                         }
