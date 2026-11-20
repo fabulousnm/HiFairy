@@ -80,9 +80,26 @@ import io.noties.markwon.inlineparser.MarkwonInlineParserPlugin
 import io.noties.markwon.ext.tables.TablePlugin
 import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
 import io.noties.markwon.ext.tasklist.TaskListPlugin
+import org.commonmark.node.FencedCodeBlock
+import org.commonmark.node.Node
+import org.commonmark.parser.Parser
+
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+
+private data class CodeSnippet(val language: String, val code: String)
+
+private fun codeSnippets(markdown: String): List<CodeSnippet> {
+    val found = mutableListOf<CodeSnippet>()
+    fun visit(node: Node) {
+        if (node is FencedCodeBlock) found.add(CodeSnippet(node.info.orEmpty().trim(), node.literal.orEmpty()))
+        var child = node.firstChild
+        while (child != null) { visit(child); child = child.next }
+    }
+    visit(Parser.builder().build().parse(markdown))
+    return found
+}
 
 private object ThemeTokens {
     val background = Color(0xFF070818)
@@ -234,6 +251,7 @@ private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String
     val isUser = message.role == "user"
     val context = LocalContext.current
     var reasoningExpanded by remember { mutableStateOf(false) }
+    val snippets = remember(message.content) { if (isUser) emptyList() else codeSnippets(message.content) }
     Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Top) {
         if (!isUser) ChatAvatar("assistant", avatar, Modifier.size(36.dp))
         Column(Modifier.widthIn(max = 300.dp).padding(horizontal = 8.dp), horizontalAlignment = if (isUser) Alignment.End else Alignment.Start) {
@@ -249,6 +267,14 @@ private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String
                 Box(Modifier.background(if (isUser) ThemeTokens.userBubble else ThemeTokens.fairyBubble, RoundedCornerShape(16.dp)).padding(horizontal = 14.dp, vertical = 11.dp)) {
                     MarkdownMessage(message.content.ifBlank { "正在思考…" }, Modifier.fillMaxWidth())
                 }
+            }
+            if (!isUser) snippets.forEachIndexed { index, snippet ->
+                Text("▣ 复制代码 ${index + 1}${snippet.language.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()}",
+                    color = ThemeTokens.accent, fontSize = 11.sp,
+                    modifier = Modifier.clickable(onClickLabel = "复制第 ${index + 1} 段代码") {
+                        (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+                            .setPrimaryClip(ClipData.newPlainText("Fairy 代码", snippet.code))
+                    }.padding(horizontal = 12.dp, vertical = 7.dp))
             }
             if (isUser && message.attachments.isNotEmpty()) {
                 message.attachments.forEach { attachment ->
