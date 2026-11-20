@@ -29,3 +29,5 @@
 公网流式复核：本机 SSE 可逐段返回，但沿用的 Cloudflare Quick Tunnel 对 SSE 连接超时；[Cloudflare 官方 Quick Tunnel 限制](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/)明确说明不支持 SSE。因此 Agent 实时通道改用同一域名的 `wss://…/agent/live/{sessionId}`，首条 WebSocket 消息发送独立 Agent 令牌，电脑 FastAPI 在本机读取 DSH SSE 并逐帧转发到 WebSocket；会话列表、创建和发消息仍走 HTTPS。语音 `/stream` 不受影响。本机及公网首增量已在下一段复核；真机显示仍待验收。
 
 WebSocket 复测通过：本机短回答首增量约 1166 ms、最终约 1478 ms；公网较长回答首增量约 3236 ms、增量持续 2164 ms、最终约 5432 ms，共 319 个增量。错误令牌在握手后以 WebSocket 1008 拒绝。说明公网传输可在回答完成前持续送达；手机端实际绘制与网络切换行为仍需真机验收。测试命令为 `python voice-pc/verify_agent_websocket.py --base-url <https://.../agent> --long`，不会打印令牌或回答正文。
+
+2026-11-20 历史和记录修正：DSH `list()` 的标题位于 `projections.values.title`，旧桥接误读顶层 `title`，导致大量“新任务”。现目录只返回非空会话的轻量元数据；手机仅在选择会话时请求 `/recent`，桥接从 Host 事件取最近 15 条用户/助手消息，不再用 `turnOutline` 的截短摘要。测试会话中 532 字回答完整返回，最近记录约 4.4 KB。Agent 思考、工具调用及工作步骤有独立折叠卡片；工具输入与结果、完整思考在展开时才取 `/details`，工作步骤显示耗时及相关工具。WebSocket 快照只传游标，事件只传类型，避免把整份 Host 快照推到手机。读取选中会话时显示进度条；切换会话清理旧记录。眼徽按住时显示 2 秒环形进度，松开复位。桥接 Node 测试、网关隔离测试和 APK 构建通过；真机视觉和长会话体验仍需验收。

@@ -28,6 +28,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.geometry.Offset
@@ -70,7 +71,47 @@ import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
 
 private data class AgentSession(val id: String, val title: String)
-private data class AgentTurn(val prompt: String, val response: String)
+private data class AgentItem(val id: String, val kind: String, val text: String, val title: String, val preview: String, val detailKey: String, val hasResult: Boolean)
+
+@Composable
+private fun AgentRecordCard(item: AgentItem, expandedText: String?, onClick: () -> Unit) {
+    val tint = when (item.kind) {
+        "tool" -> Color(0xFF83B9CA)
+        "work" -> Color(0xFFB7A3DF)
+        else -> ThemeTokens.accent
+    }
+    Column(Modifier.fillMaxWidth().padding(start = 56.dp, bottom = 10.dp)
+        .background(ThemeTokens.surface, RoundedCornerShape(16.dp))
+        .border(1.dp, tint.copy(alpha = .35f), RoundedCornerShape(16.dp))
+        .clickable(onClick = onClick).padding(12.dp)) {
+        Text((when (item.kind) { "tool" -> "⚙  "; "work" -> "◇  "; else -> "◌  " }) + item.title + if (expandedText == null) "  ›" else "  ⌄",
+            color = tint, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text(if (expandedText == null) item.preview else expandedText, color = ThemeTokens.text,
+            fontSize = 12.sp, lineHeight = 18.sp, modifier = Modifier.padding(top = 6.dp))
+    }
+}
+
+@Composable
+private fun AgentHoldEye(size: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier, active: Boolean = false, onSwitch: () -> Unit) {
+    val progress = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    Box(modifier.size(size)) {
+        FairyEye(Modifier.fillMaxSize().pointerInput(Unit) {
+            detectTapGestures(onPress = {
+                progress.snapTo(0f)
+                val animation = scope.launch { progress.animateTo(1f, tween(AGENT_MODE_HOLD_MS.toInt())) }
+                val released = withTimeoutOrNull(AGENT_MODE_HOLD_MS) { tryAwaitRelease() }
+                animation.cancel()
+                if (released == null) onSwitch()
+                progress.animateTo(0f, tween(180))
+            })
+        }, active = active)
+        if (progress.value > .001f) Canvas(Modifier.matchParentSize()) {
+            drawArc(ThemeTokens.accent, -90f, 360f * progress.value, false,
+                style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round))
+        }
+    }
+}
 
 private class AgentConnection(private val settings: SecureSettings) {
     private val socketClient = OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS).build()
@@ -116,12 +157,17 @@ private class AgentConnection(private val settings: SecureSettings) {
     fun create(): String = request("/sessions", "POST", "{}").getString("sessionId")
     fun send(id: String, text: String) { request("/sessions/$id/messages", "POST", JSONObject().put("text", text).toString()) }
 
-    fun turns(id: String): List<AgentTurn> {
-        val json = request("/sessions/$id/snapshot")
-        val outline = json.optJSONObject("projections")?.optJSONObject("values")?.optJSONArray("turnOutline") ?: return emptyList()
-        return (0 until outline.length()).map { outline.getJSONObject(it) }.map {
-            AgentTurn(it.optString("prompt"), it.optString("response"))
+    fun recent(id: String): List<AgentItem> {
+        val items = request("/sessions/$id/recent").getJSONArray("items")
+        return (0 until items.length()).map { items.getJSONObject(it) }.map {
+            AgentItem(it.optString("id"), it.optString("kind"), it.optString("text"),
+                it.optString("title"), it.optString("preview"), it.optString("detailKey"), it.optBoolean("hasResult"))
         }
+    }
+
+    fun detail(id: String, item: AgentItem): String {
+        val json = request("/sessions/$id/details/${item.kind}/${item.detailKey}")
+        return if (item.kind == "tool") "输入\n${json.optString("arguments")}\n\n输出\n${json.optString("result")}" else json.optString("text")
     }
 
     suspend fun follow(id: String, onFrame: (JSONObject) -> Unit) = suspendCancellableCoroutine<Unit> { continuation ->
@@ -171,7 +217,10 @@ class AgentActivity : ComponentActivity() {
             var tokenReady by remember { mutableStateOf(settings.agentToken().isNotBlank()) }
             var sessions by remember { mutableStateOf(emptyList<AgentSession>()) }
             var selected by remember { mutableStateOf("") }
-            var turns by remember { mutableStateOf(emptyList<AgentTurn>()) }
+            var items by remember { mutableStateOf(emptyList<AgentItem>()) }
+            var loadingHistory by remember { mutableStateOf(false) }
+            var loadedSession by remember { mutableStateOf("") }
+            val expanded = remember { mutableStateMapOf<String, String>() }
             var draft by remember { mutableStateOf("") }
             var error by remember { mutableStateOf("") }
             var busy by remember { mutableStateOf(false) }
@@ -203,7 +252,9 @@ class AgentActivity : ComponentActivity() {
             fun newTask() {
                 speechPlayer.stop()
                 selected = ""
-                turns = emptyList()
+                items = emptyList()
+                loadedSession = ""
+                expanded.clear()
                 pendingPrompt = ""
                 liveText = ""
                 liveReasoning = ""
@@ -211,13 +262,22 @@ class AgentActivity : ComponentActivity() {
                 listOpen = false
             }
 
-            suspend fun refresh() {
+            suspend fun refreshList() {
                 try {
-                    val result = withContext(Dispatchers.IO) { api.sessions() }
-                    sessions = result
-                    if (selected.isNotEmpty()) turns = withContext(Dispatchers.IO) { api.turns(selected) }
+                    sessions = withContext(Dispatchers.IO) { api.sessions() }
                     error = ""
                 } catch (e: Exception) { error = e.message ?: "连接失败" }
+            }
+
+            suspend fun refreshSelected() {
+                val target = selected
+                if (target.isBlank()) return
+                loadingHistory = true
+                try {
+                    val result = withContext(Dispatchers.IO) { api.recent(target) }
+                    if (selected == target) { items = result; loadedSession = target; error = "" }
+                } catch (e: Exception) { if (selected == target) error = e.message ?: "读取会话失败" }
+                finally { if (selected == target) loadingHistory = false }
             }
 
             fun submit(text: String) {
@@ -228,13 +288,14 @@ class AgentActivity : ComponentActivity() {
                         if (selected.isBlank()) {
                             streamConnected = false
                             selected = withContext(Dispatchers.IO) { api.create() }
-                            turns = emptyList()
+                            items = emptyList()
                         }
                         withTimeout(10000L) { while (!streamConnected) delay(50) }
                         pendingPrompt = text.trim()
                         withContext(Dispatchers.IO) { api.send(selected, text.trim()) }
                         draft = ""
-                        refresh()
+                        refreshSelected()
+                        refreshList()
                     } catch (e: Exception) {
                         pendingPrompt = ""
                         error = e.message ?: "发送失败"
@@ -249,7 +310,8 @@ class AgentActivity : ComponentActivity() {
                 if (it) voiceInput.prepare() else voiceStatus = "需要麦克风权限"
             }
 
-            LaunchedEffect(tokenReady) { if (tokenReady) refresh() }
+            LaunchedEffect(tokenReady) { if (tokenReady) refreshList() }
+            LaunchedEffect(selected, tokenReady) { if (tokenReady && selected.isNotBlank()) refreshSelected() }
             LaunchedEffect(selected, tokenReady) {
                 if (!tokenReady || selected.isBlank()) return@LaunchedEffect
                 streamConnected = false
@@ -261,23 +323,25 @@ class AgentActivity : ComponentActivity() {
                                 if (selected != followingSession) return@launch
                                 if (frame.optString("type") == "snapshot") {
                                     streamConnected = true
-                                    refresh()
+                                    if (loadedSession != followingSession) refreshSelected()
                                 }
                                 if (streamReducer.apply(frame)) {
                                     liveText = streamReducer.text
                                     liveReasoning = streamReducer.reasoning
                                 }
                                 val eventType = frame.optJSONObject("event")?.optString("type")
+                                if (eventType in setOf("tool/call", "tool/result", "step/start", "step/end")) refreshSelected()
                                 if (frame.optString("type") == "event" && eventType == "assistant/message") {
-                                    refresh()
+                                    refreshSelected()
                                     liveText = ""
                                     liveReasoning = ""
                                 }
                                 if (frame.optString("type") == "event" && eventType == "turn/end") {
-                                    refresh()
-                                    val latest = turns.lastOrNull()?.response.orEmpty()
+                                    refreshSelected()
+                                    refreshList()
+                                    val latest = items.lastOrNull { it.kind == "assistant" }?.text.orEmpty()
                                     if (voiceAutoPlay && latest.isNotBlank()) {
-                                        val index = turns.lastIndex
+                                        val index = items.indexOfLast { it.kind == "assistant" }
                                         if (speechPlayer.play(settings.voiceEndpoint, settings.voiceToken(), latest, index.toLong())) playingIndex = index
                                     }
                                     liveText = ""
@@ -288,7 +352,7 @@ class AgentActivity : ComponentActivity() {
                         }
                     } catch (e: Exception) { error = e.message ?: "实时连接中断" }
                     delay(1500)
-                    refresh()
+                    refreshList()
                 }
             }
             BackHandler(listOpen) { listOpen = false }
@@ -351,38 +415,54 @@ class AgentActivity : ComponentActivity() {
                         }
                     } else if (selected.isBlank()) {
                         Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                            FairyEye(Modifier.size(150.dp).pointerInput(Unit) {
-                                detectTapGestures(onPress = {
-                                    if (withTimeoutOrNull(AGENT_MODE_HOLD_MS) { tryAwaitRelease() } == null) finish()
-                                })
-                            })
+                            AgentHoldEye(150.dp, onSwitch = { finish() })
                             Text(greetingForHour(LocalTime.now().hour), color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.padding(top = 35.dp))
                         }
                     } else {
-                        FairyEye(Modifier.align(Alignment.TopStart).offset(y = 28.dp).size(54.dp).pointerInput(Unit) {
-                            detectTapGestures(onPress = { if (withTimeoutOrNull(AGENT_MODE_HOLD_MS) { tryAwaitRelease() } == null) finish() })
-                        }, active = pendingPrompt.isNotBlank())
+                        AgentHoldEye(54.dp, Modifier.align(Alignment.TopStart).offset(y = 28.dp), pendingPrompt.isNotBlank()) { finish() }
                         FairyOnlineStatus(pendingPrompt.isNotBlank(), Modifier.align(Alignment.TopStart).offset(x = 70.dp, y = 46.dp))
                         val scroll = rememberScrollState()
-                        LaunchedEffect(turns.size, liveText) { if (!scroll.isScrollInProgress && scroll.maxValue - scroll.value < 120) scroll.scrollTo(scroll.maxValue) }
+                        LaunchedEffect(items.size, liveText) { if (!scroll.isScrollInProgress && scroll.maxValue - scroll.value < 120) scroll.scrollTo(scroll.maxValue) }
                         Column(Modifier.fillMaxSize().padding(top = 94.dp).verticalScroll(scroll)) {
-                            turns.forEachIndexed { index, turn ->
-                                if (turn.prompt.isNotBlank()) ChatBubble(ChatMessage("user", turn.prompt), settings.displayName, settings.avatar,
-                                    false, false, false, false, false, {}, {}, {}, {}, {})
-                                if (turn.response.isNotBlank()) ChatBubble(ChatMessage("assistant", turn.response), settings.displayName, settings.avatar,
-                                    false, false, false, playingIndex == index, false,
-                                    onCopy = { (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("DSH 回答", turn.response)) },
-                                    onEdit = {}, onRegenerate = {}, onContinue = {},
-                                    onReplay = {
-                                        if (playingIndex == index) { speechPlayer.stop(); playingIndex = -1 }
-                                        else if (speechPlayer.play(settings.voiceEndpoint, settings.voiceToken(), turn.response, index.toLong())) playingIndex = index
-                                    }, assistantName = "DSH")
+                            if (loadingHistory && loadedSession != selected) {
+                                androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth(), color = ThemeTokens.accent)
+                                Text("正在读取最近 15 条记录…", color = ThemeTokens.secondary, fontSize = 12.sp)
                             }
-                            if (pendingPrompt.isNotBlank() && turns.lastOrNull()?.prompt != pendingPrompt)
+                            items.forEachIndexed { index, item ->
+                                if (item.kind == "user" || item.kind == "assistant") {
+                                    ChatBubble(ChatMessage(item.kind, item.text), settings.displayName, settings.avatar,
+                                        false, false, false, playingIndex == index, false,
+                                        onCopy = { (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("DSH 消息", item.text)) },
+                                        onEdit = {}, onRegenerate = {}, onContinue = {},
+                                        onReplay = {
+                                            if (playingIndex == index) { speechPlayer.stop(); playingIndex = -1 }
+                                            else if (speechPlayer.play(settings.voiceEndpoint, settings.voiceToken(), item.text, index.toLong())) playingIndex = index
+                                        }, assistantName = "DSH", showActions = item.kind == "assistant")
+                                } else {
+                                    AgentRecordCard(item, expanded[item.id], onClick = {
+                                        if (expanded.containsKey(item.id)) expanded.remove(item.id)
+                                        else if (item.kind == "work") expanded[item.id] = item.text
+                                        else scope.launch {
+                                            val requestedSession = selected
+                                            expanded[item.id] = "正在读取…"
+                                            try {
+                                                val detail = withContext(Dispatchers.IO) { api.detail(requestedSession, item) }
+                                                if (selected == requestedSession) expanded[item.id] = detail
+                                            } catch (e: Exception) { if (selected == requestedSession) expanded[item.id] = e.message ?: "读取失败" }
+                                        }
+                                    })
+                                }
+                            }
+                            if (pendingPrompt.isNotBlank() && items.lastOrNull { it.kind == "user" }?.text != pendingPrompt)
                                 ChatBubble(ChatMessage("user", pendingPrompt), settings.displayName, settings.avatar, false, false, false, false, true, {}, {}, {}, {}, {})
+                            if (liveReasoning.isNotBlank()) AgentRecordCard(
+                                AgentItem("live-reasoning", "reasoning", "", "思考进行中", liveReasoning.take(220), "", false),
+                                expanded["live-reasoning"], onClick = {
+                                    if (expanded.containsKey("live-reasoning")) expanded.remove("live-reasoning") else expanded["live-reasoning"] = liveReasoning
+                                })
                             if (pendingPrompt.isNotBlank() || liveText.isNotBlank() || liveReasoning.isNotBlank())
-                                ChatBubble(ChatMessage("assistant", liveText, liveReasoning), settings.displayName, settings.avatar, false, false, false, false, true, {}, {}, {}, {}, {}, showActions = false, assistantName = "DSH")
+                                ChatBubble(ChatMessage("assistant", liveText), settings.displayName, settings.avatar, false, false, false, false, true, {}, {}, {}, {}, {}, showActions = false, assistantName = "DSH")
                         }
                     }
                 }
@@ -453,7 +533,7 @@ class AgentActivity : ComponentActivity() {
                             HistorySessionSurface(session.id == selected) {
                                 Text(session.title, color = if (session.id == selected) ThemeTokens.accent else ThemeTokens.text,
                                     maxLines = 2, modifier = Modifier.fillMaxWidth().clickable {
-                                        speechPlayer.stop(); selected = session.id; listOpen = false; pendingPrompt = ""; liveText = ""; liveReasoning = ""
+                                        speechPlayer.stop(); items = emptyList(); loadedSession = ""; expanded.clear(); selected = session.id; listOpen = false; pendingPrompt = ""; liveText = ""; liveReasoning = ""
                                     }.padding(vertical = 8.dp))
                             }
                         }

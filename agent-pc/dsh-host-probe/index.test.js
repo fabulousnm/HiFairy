@@ -4,7 +4,7 @@ import { createProbeServer } from './index.js'
 
 test('only an authenticated request can read Host session summaries', async () => {
   let calls = 0
-  const server = createProbeServer({ async list() { calls++; return { items: [{ sessionId: 'one', title: 'Test', workingDirectory: 'D:\\workspace', secret: 'hidden' }] } } }, 'a'.repeat(40))
+  const server = createProbeServer({ async list() { calls++; return { items: [{ sessionId: 'one', projections: { values: { title: 'Test' } }, cwd: 'D:\\workspace', secret: 'hidden' }, { sessionId: 'blank', blank: true }] } } }, 'a'.repeat(40))
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   try {
     const url = `http://127.0.0.1:${server.address().port}/sessions`
@@ -15,6 +15,8 @@ test('only an authenticated request can read Host session summaries', async () =
     assert.equal(allowed.status, 200)
     const body = await allowed.json()
     assert.equal(body.items[0].sessionId, 'one')
+    assert.equal(body.items[0].title, 'Test')
+    assert.equal(body.items.length, 1)
     assert.equal(body.items[0].secret, undefined)
   } finally {
     await new Promise(resolve => server.close(resolve))

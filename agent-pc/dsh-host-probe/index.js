@@ -1,6 +1,7 @@
 import { createServer } from 'node:http'
 import { readFileSync } from 'node:fs'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
+import { RECENT_MESSAGE_LIMIT, recentItems, findDetail } from './recent.js'
 
 export const name = 'hifairy-dsh-host-probe'
 export const inject = ['sessionController']
@@ -55,6 +56,24 @@ export function createProbeServer(controller, token, options = {}) {
       }
     }
     if (request.method !== 'GET') return respond(response, 405, { error: 'method_not_allowed' })
+    const recentMatch = /^\/sessions\/(session-[a-z0-9-]+)\/recent$/.exec(request.url ?? '')
+    const detailMatch = /^\/sessions\/(session-[a-z0-9-]+)\/details\/(reasoning|tool)\/([a-zA-Z0-9_-]+)$/.exec(request.url ?? '')
+    if (recentMatch || detailMatch) {
+      const sessionId = recentMatch?.[1] ?? detailMatch[1]
+      let stream
+      try {
+        stream = controller.follow({ address: { kind: 'session', sessionId }, maxMessages: RECENT_MESSAGE_LIMIT, assistantStream: false }, AbortSignal.timeout(15000))[Symbol.asyncIterator]()
+        const first = await stream.next()
+        if (first.done || first.value?.type !== 'snapshot') return respond(response, 503, { error: 'snapshot_unavailable' })
+        if (recentMatch) return respond(response, 200, recentItems(first.value))
+        const detail = findDetail(first.value, detailMatch[2], detailMatch[3])
+        return detail ? respond(response, 200, detail) : respond(response, 404, { error: 'detail_not_found' })
+      } catch (error) {
+        return respond(response, 503, { error: 'host_unavailable', detail: String(error?.message ?? error) })
+      } finally {
+        await stream?.return?.()
+      }
+    }
     const match = /^\/sessions\/(session-[a-z0-9-]+)\/(snapshot|events)$/.exec(request.url ?? '')
     if (match) {
       const [, sessionId, action] = match
@@ -77,7 +96,15 @@ export function createProbeServer(controller, token, options = {}) {
       try {
         const stream = controller.follow({ address: { kind: 'session', sessionId }, maxMessages: 20, assistantStream: true }, abort.signal)[Symbol.asyncIterator]()
         for await (const frame of { [Symbol.asyncIterator]: () => stream }) {
-          response.write(`data: ${JSON.stringify(frame)}\n\n`)
+          let outgoing
+          if (frame.type === 'snapshot') outgoing = { type: 'snapshot', cursor: frame.cursor }
+          else if (frame.type === 'assistant-stream') {
+            const chunkType = frame.frame?.chunk?.type
+            if (frame.frame?.type === 'start' || chunkType === 'block-start' || chunkType === 'text-delta') outgoing = frame
+          } else if (frame.type === 'event' && ['user/message', 'assistant/message', 'tool/call', 'tool/result', 'step/start', 'step/end', 'turn/end'].includes(frame.event?.type)) {
+            outgoing = { type: 'event', event: { type: frame.event.type } }
+          }
+          if (outgoing) response.write(`data: ${JSON.stringify(outgoing)}\n\n`)
         }
       } catch (error) {
         if (!abort.signal.aborted) response.write(`event: error\ndata: ${JSON.stringify({ error: String(error?.message ?? error) })}\n\n`)
@@ -89,7 +116,10 @@ export function createProbeServer(controller, token, options = {}) {
     if (request.url !== '/sessions') return respond(response, 404, { error: 'not_found' })
     try {
       const result = await controller.list({}, AbortSignal.timeout(5000))
-      respond(response, 200, { items: result.items.map(({ sessionId, title, workingDirectory }) => ({ sessionId, title, workingDirectory })) })
+      respond(response, 200, { items: result.items.filter(item => !item.blank)
+        .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+        .map(item => ({ sessionId: item.sessionId, title: item.projections?.values?.title ?? '',
+          workingDirectory: item.cwd, updatedAt: item.updatedAt, running: Boolean(item.running) })) })
     } catch (error) {
       respond(response, 503, { error: 'host_unavailable', detail: String(error?.message ?? error) })
     }

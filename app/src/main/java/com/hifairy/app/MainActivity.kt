@@ -924,18 +924,23 @@ class MainActivity : ComponentActivity() {
                             val eyeY by animateDpAsState(if (hasConversation) 28.dp else (maxHeight - eyeSize) / 2, tween(550), label = "eye y")
                             val eyeInteractive = introPhase == "ready" && (!hasConversation || !sending || generationPaused)
                             var eyeHoldTriggered by remember { mutableStateOf(false) }
+                            val eyeHoldProgress = remember { androidx.compose.animation.core.Animatable(0f) }
                             FairyEye(Modifier.offset(eyeX, eyeY).size(eyeSize)
                                 .pointerInput(eyeInteractive, hasConversation) {
                                     if (eyeInteractive) detectTapGestures(
                                         onPress = {
                                             if (!hasConversation) {
+                                                eyeHoldProgress.snapTo(0f)
+                                                val holdAnimation = scope.launch { eyeHoldProgress.animateTo(1f, tween(AGENT_MODE_HOLD_MS.toInt())) }
                                                 val released = withTimeoutOrNull(AGENT_MODE_HOLD_MS) { tryAwaitRelease() }
+                                                holdAnimation.cancel()
                                                 if (released == null) {
                                                     eyeHoldTriggered = true
                                                     eyeCardOpen = false
                                                     stopBalanceVoice()
                                                     startActivity(Intent(this@MainActivity, AgentActivity::class.java))
                                                 }
+                                                eyeHoldProgress.animateTo(0f, tween(180))
                                             }
                                         },
                                         onTap = {
@@ -963,6 +968,10 @@ class MainActivity : ComponentActivity() {
                                 }
                                 .semantics { contentDescription = if (eyeInteractive) "Fairy 眼徽，单击查看账户余额，双击眨眼" else "Fairy 正在工作" },
                                 active = sending && !generationPaused, completionToken = eyeCompletionToken, blinkToken = eyeBlinkToken)
+                            if (eyeHoldProgress.value > .001f) Canvas(Modifier.offset(eyeX - 4.dp, eyeY - 4.dp).size(eyeSize + 8.dp)) {
+                                drawArc(ThemeTokens.accent, -90f, 360f * eyeHoldProgress.value, false,
+                                    style = Stroke(width = 3.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round))
+                            }
                             if (hasConversation) {
                                 FairyOnlineStatus(sending && !generationPaused, Modifier.offset(70.dp, 46.dp).graphicsLayer { alpha = chatReveal.value })
                                 val scrollState = rememberScrollState()

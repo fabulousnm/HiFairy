@@ -38,7 +38,12 @@ def test_agent_gateway():
             assert (await client.get("/agent/sessions")).status_code == 401
             assert (await client.get("/agent/other", headers={"Authorization": "Bearer mobile-secret"})).status_code == 404
             assert (await client.get("/agent/sessions", headers={"Authorization": "Bearer mobile-secret"})).status_code == 200
-            assert calls == [("GET", "/sessions", "Bearer bridge-secret")]
+            assert (await client.get("/agent/sessions/session-abc/recent", headers={"Authorization": "Bearer mobile-secret"})).status_code == 200
+            assert (await client.get("/agent/sessions/session-abc/details/tool/call_01_x", headers={"Authorization": "Bearer mobile-secret"})).status_code == 200
+            assert (await client.get("/agent/sessions/session-abc/details/tool/..", headers={"Authorization": "Bearer mobile-secret"})).status_code == 404
+            assert calls == [("GET", "/sessions", "Bearer bridge-secret"),
+                             ("GET", "/sessions/session-abc/recent", "Bearer bridge-secret"),
+                             ("GET", "/sessions/session-abc/details/tool/call_01_x", "Bearer bridge-secret")]
 
     with patch.object(gateway, "MOBILE_TOKEN_FILE", mobile), patch.object(gateway, "BRIDGE_TOKEN_FILE", bridge), patch.object(gateway.httpx, "AsyncClient", client_factory):
         asyncio.run(check())

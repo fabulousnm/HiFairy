@@ -34,6 +34,8 @@ Windows 上可双击仓库根目录的 `启动HiFairy语音服务器.cmd`：脚�
 
 Agent 实时回复使用同域 WebSocket `wss://…/agent/live/{sessionId}`，首条消息发送 Agent 令牌；服务端从本地 DSH SSE 逐帧转发。Cloudflare Quick Tunnel 不支持 SSE，所以手机不能直接使用 `/agent/sessions/{id}/events` 的 HTTP 事件流。可用 `python voice-pc/verify_agent_websocket.py --base-url <https://.../agent> --long` 测公网首增量与最终消息。
 
+Agent 历史目录 `GET /agent/sessions` 只返回会话元数据；打开某条会话时 `GET /agent/sessions/{id}/recent` 返回最近 15 条完整消息及折叠记录。展开思考或工具卡片再访问 `GET /agent/sessions/{id}/details/{reasoning|tool}/{key}`。实时 WebSocket 不转发整份快照，避免重复传输。电脑 DSH 重新启动后才会加载桥接插件文件的改动。
+
 ```powershell
 & '<虚拟环境>\Scripts\python.exe' voice-pc\server.py
 & '<虚拟环境>\Scripts\python.exe' voice-pc\client_benchmark.py ws://127.0.0.1:8765/stream
