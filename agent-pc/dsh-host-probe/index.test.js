@@ -20,3 +20,49 @@ test('only an authenticated request can read Host session summaries', async () =
     await new Promise(resolve => server.close(resolve))
   }
 })
+
+test('session snapshot uses the same Host follow stream', async () => {
+  let request
+  const server = createProbeServer({
+    follow(input) {
+      request = input
+      return (async function* () { yield { type: 'snapshot', cursor: 7, records: [] } })()
+    }
+  }, 'b'.repeat(40))
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  try {
+    const url = `http://127.0.0.1:${server.address().port}/sessions/session-abc/snapshot`
+    const result = await fetch(url, { headers: { Authorization: `Bearer ${'b'.repeat(40)}` } })
+    assert.equal(result.status, 200)
+    assert.equal((await result.json()).cursor, 7)
+    assert.equal(request.address.sessionId, 'session-abc')
+  } finally {
+    await new Promise(resolve => server.close(resolve))
+  }
+})
+
+test('creates in the configured workspace and queues a message in that Host session', async () => {
+  const calls = []
+  const controller = {
+    async create(request) { calls.push(['create', request]); return { sessionId: 'session-test' } },
+    async list() { return { items: [{ sessionId: 'session-test' }] } },
+    async prompt(request) { calls.push(['prompt', request]); return { accepted: true } }
+  }
+  const token = 'c'.repeat(40)
+  const server = createProbeServer(controller, token, { workspaceId: 'workspace-1' })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`
+    const headers = { Authorization: `Bearer ${token}` }
+    const created = await fetch(`${base}/sessions`, { method: 'POST', headers })
+    assert.equal(created.status, 201)
+    assert.equal(calls[0][1].cwd, undefined)
+    assert.equal(calls[0][1].workspaceId, 'workspace-1')
+    const sent = await fetch(`${base}/sessions/session-test/messages`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ text: '联通测试' }) })
+    assert.equal(sent.status, 202)
+    assert.equal(calls[1][1].content[0].text, '联通测试')
+    assert.equal(calls[1][1].mode, 'queue')
+  } finally {
+    await new Promise(resolve => server.close(resolve))
+  }
+})

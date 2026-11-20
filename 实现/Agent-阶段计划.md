@@ -16,4 +16,6 @@
 
 已建立 `agent-pc/dsh-host-probe/` 只读 Host 插件 PoC：依赖 DSH 的 `sessionController` 服务，独立监听 `127.0.0.1:18765`，仅 `GET /sessions` 且必须带独立 Bearer 令牌；只返回会话 ID、标题和工作目录，不暴露原始事件或工具执行。Node 静默单元测试验证未经认证不调用 Host 服务、授权后仅返回允许字段。
 
-2026-11-20 真机电脑验证更新：用户确认可重启后，已将本地插件目录链接到现有 DSH Desktop profile，并列入其 bundle；离线 pnpm 安装因现有第三方包缺少离线元数据而失败，未改动原 manifest/lock，改用可撤回的本地目录链接。独立令牌生成于 `D:\dsh-data\hifairy-agent-probe.token`，不进入仓库。重启后 `127.0.0.1:18765` 成功监听；`verify.ps1` 实际返回 Host 会话 37 条，其中 21 个 ID 与桌面工作区存储一致；无令牌请求得到 HTTP 401。**已证明只读同 Host 会话发现**，尚未实现实时事件、创建/继续会话、手机连接或异网访问。当前桥接仅可在电脑本机访问，未暴露公网。
+2026-11-20 Host 接入验证：用户确认可重启后，已将本地插件目录链接到现有 DSH Desktop profile，并列入其 bundle；离线 pnpm 安装因现有第三方包缺少离线元数据而失败，未改动原 manifest/lock，改用可撤回的本地目录链接。独立令牌生成于 `D:\dsh-data\hifairy-agent-probe.token`，不进入仓库。重启后 `127.0.0.1:18765` 成功监听；`verify.ps1` 实际返回 Host 会话 37 条，其中 21 个 ID 与桌面工作区存储一致；无令牌请求得到 HTTP 401。当前桥接仅可在电脑本机访问，未暴露公网。
+
+下一步验证（2026-11-20）：使用本机安装的 DSH `0.2.0-rc.2` Session Controller 类型定义，桥接新增受令牌保护的 `POST /sessions`、`POST /sessions/:id/messages`、`GET /sessions/:id/snapshot` 和 `GET /sessions/:id/events`。最初只传测试子目录 `cwd` 创建的会话虽能回答，但未出现在桌面工作区列表；同时传 `cwd` 与 `workspaceId` 被 Host 明确拒绝。最终改为仅传电脑默认 `workspaceId`，新会话收到回答，且同时出现在 Host 列表和桌面工作区记录。持续事件流测试在连接保持期间发送第二条消息，实时收到 `assistant/message` 和 `turn/end`，脚本 `verify-live.mjs` 输出三项均为 true。单元测试 3 项通过。**已验证电脑端同 Host 创建、发送及实时事件闭环**；手机 APK 接入、断线重连、权限批准和同网址异网入口仍未实现。此 PoC 使用本机回环端口和独立令牌，不对公网开放。

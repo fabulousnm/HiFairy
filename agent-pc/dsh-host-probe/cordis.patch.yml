@@ -4,3 +4,4 @@
       config:
         tokenFile: D:/dsh-data/hifairy-agent-probe.token
         port: 18765
+        workspaceId: 7aa9e390-f05d-4de8-bf4c-8deb4bf68fdb
