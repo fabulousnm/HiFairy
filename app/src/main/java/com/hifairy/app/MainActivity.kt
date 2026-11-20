@@ -7,6 +7,8 @@ import android.widget.VideoView
 import android.widget.TextView
 import android.widget.FrameLayout
 import android.widget.ImageButton
+import android.view.View
+import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.widget.Toast
 import android.graphics.BitmapFactory
@@ -115,6 +117,10 @@ private object ThemeTokens {
     val fairyBubble = Color(0xFF161A2A)
     val userBubble = Color(0xFF293765)
     val codeBackground = 0xFF080914.toInt()
+    val codeCardTop = 0xFF34425D.toInt()
+    val codeCardBottom = 0xFF253149.toInt()
+    val codeCardRim = 0xFF596C91.toInt()
+    val codeCardShadow = 0xFF080B18.toInt()
     val reasoningBubble = Color(0xFF101B27)
     val raisedCard = Color(0xFF27314D)
     val raisedCardRim = Color(0xFF59698E)
@@ -167,7 +173,7 @@ private fun MarkdownMessage(message: String, modifier: Modifier = Modifier, copy
             .usePlugin(SyntaxHighlightPlugin.create(CodeGrammarBundle.create(), Prism4jThemeDarkula.create()))
             .usePlugin(object : AbstractMarkwonPlugin() {
                 override fun configureTheme(builder: MarkwonTheme.Builder) {
-                    builder.codeBlockBackgroundColor(ThemeTokens.codeBackground)
+                    builder.codeBlockBackgroundColor(android.graphics.Color.TRANSPARENT)
                         .codeBlockTextColor(android.graphics.Color.rgb(232, 243, 255))
                         .codeBackgroundColor(ThemeTokens.codeBackground)
                 }
@@ -177,21 +183,22 @@ private fun MarkdownMessage(message: String, modifier: Modifier = Modifier, copy
     AndroidView(factory = { androidContext ->
         FrameLayout(androidContext).apply {
             addView(TextView(androidContext).apply {
+                tag = "markdown-text"
                 setTextColor(android.graphics.Color.rgb(232, 243, 255)); textSize = 16f
                 setLineSpacing(4f, 1f); setTextIsSelectable(true)
                 setLinkTextColor(android.graphics.Color.rgb(143, 180, 255))
             }, FrameLayout.LayoutParams(-1, -2))
         }
     }, update = { container ->
-        val textView = container.getChildAt(0) as TextView
+        val textView = container.findViewWithTag<TextView>("markdown-text")
         container.tag = message
         markwon.setMarkdown(textView, normalizeMath(message))
         container.post {
             if (container.tag != message) return@post
-            if (container.childCount > 1) container.removeViews(1, container.childCount - 1)
-            if (!copyCode) return@post
+            for (child in container.childCount - 1 downTo 0) if (container.getChildAt(child) !== textView) container.removeViewAt(child)
             val layout = textView.layout ?: return@post
             val rendered = textView.text.toString()
+            val density = container.resources.displayMetrics.density
             var searchFrom = 0
             codeSnippets(message).forEachIndexed { index, snippet ->
                 val code = snippet.code.trimEnd('\n', '\r')
@@ -199,11 +206,27 @@ private fun MarkdownMessage(message: String, modifier: Modifier = Modifier, copy
                 val start = rendered.indexOf(code, searchFrom)
                 if (start < 0) return@forEachIndexed
                 searchFrom = start + code.length
-                val buttonSize = (32 * container.resources.displayMetrics.density).toInt()
+                val end = (start + code.length - 1).coerceAtMost(rendered.lastIndex)
+                val top = (textView.top + layout.getLineTop(layout.getLineForOffset(start)) - 3 * density).toInt().coerceAtLeast(0)
+                val bottom = textView.top + layout.getLineBottom(layout.getLineForOffset(end)) + (5 * density).toInt()
+                val height = bottom - top
+                val shadow = View(container.context).apply {
+                    background = GradientDrawable().apply { setColor(ThemeTokens.codeCardShadow); cornerRadius = 14 * density }
+                }
+                container.addView(shadow, 0, FrameLayout.LayoutParams(-1, height, Gravity.TOP).apply { topMargin = top + (3 * density).toInt() })
+                val card = View(container.context).apply {
+                    background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(ThemeTokens.codeCardTop, ThemeTokens.codeCardBottom)).apply {
+                        cornerRadius = 14 * density
+                        setStroke((1 * density).toInt().coerceAtLeast(1), ThemeTokens.codeCardRim)
+                    }
+                }
+                container.addView(card, 1, FrameLayout.LayoutParams(-1, height, Gravity.TOP).apply { topMargin = top })
+                if (!copyCode) return@forEachIndexed
+                val buttonSize = (32 * density).toInt()
                 val button = ImageButton(container.context).apply {
                     setImageResource(R.drawable.ic_copy_code)
                     setColorFilter(android.graphics.Color.rgb(143, 180, 255))
-                    setBackgroundColor(ThemeTokens.codeBackground)
+                    background = GradientDrawable().apply { setColor(ThemeTokens.codeCardTop); cornerRadius = 9 * density }
                     contentDescription = "复制第 ${index + 1} 段代码"
                     setOnClickListener {
                         (container.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
@@ -211,7 +234,7 @@ private fun MarkdownMessage(message: String, modifier: Modifier = Modifier, copy
                     }
                 }
                 container.addView(button, FrameLayout.LayoutParams(buttonSize, buttonSize, Gravity.TOP or Gravity.END).apply {
-                    topMargin = textView.top + layout.getLineTop(layout.getLineForOffset(start))
+                    topMargin = top + (2 * density).toInt()
                 })
             }
         }
