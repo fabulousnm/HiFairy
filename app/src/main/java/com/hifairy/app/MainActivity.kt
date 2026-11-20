@@ -3,6 +3,7 @@ package com.hifairy.app
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.media.MediaPlayer
 import android.widget.VideoView
 import android.widget.TextView
 import android.widget.FrameLayout
@@ -173,6 +174,18 @@ private fun greetingForHour(hour: Int): String = when (hour) {
     in 5..11 -> "早上好，主人"
     in 12..17 -> "下午好，主人"
     else -> "晚上好，主人"
+}
+
+private fun greetingAudioForHour(hour: Int): Int = when (hour) {
+    in 5..11 -> R.raw.fairy_greet_morning
+    in 12..17 -> R.raw.fairy_greet_afternoon
+    else -> R.raw.fairy_greet_evening
+}
+
+private fun greetingSubtitleForHour(hour: Int): String = when (hour) {
+    in 5..11 -> "Fairy 已就位，今天的日程也已就位。"
+    in 12..17 -> "H.D.D 在线，摸鱼请自便。"
+    else -> "夜班系统已启动，本系统不困。"
 }
 
 private object TypeTokens {
@@ -447,6 +460,8 @@ class MainActivity : ComponentActivity() {
     private var historyOpen by mutableStateOf(false)
     private var introPhase by mutableStateOf("boot")
     private var greetingHour by mutableIntStateOf(LocalTime.now().hour)
+    private var greetingPlayer: MediaPlayer? = null
+    private var bootVideo: VideoView? = null
     private var draft by mutableStateOf("")
     private val messages = mutableStateListOf<ChatMessage>()
     private val sessions = mutableStateListOf<ChatSession>()
@@ -612,13 +627,22 @@ class MainActivity : ComponentActivity() {
                 if (introPhase == "boot") requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
                 if (introPhase == "transition") {
                     curtain.animateTo(1f, tween(320))
+                    bootVideo?.stopPlayback()
+                    bootVideo = null
                     requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                     kotlinx.coroutines.delay(380)
                     introPhase = "greeting"
                     scope.launch { curtain.animateTo(0f, tween(380)) }
                 }
                 if (introPhase == "greeting") {
-                    kotlinx.coroutines.delay(2100)
+                    greetingHour = LocalTime.now().hour
+                    val player = MediaPlayer.create(this@MainActivity, greetingAudioForHour(greetingHour))
+                    greetingPlayer = player
+                    if (player != null) {
+                        player.start()
+                        kotlinx.coroutines.delay(player.duration.toLong().coerceAtMost(13000L) + 900L)
+                        if (greetingPlayer === player) { player.release(); greetingPlayer = null }
+                    } else kotlinx.coroutines.delay(2100)
                     introPhase = "ready"
                 }
             }
@@ -652,6 +676,7 @@ class MainActivity : ComponentActivity() {
                 Box(Modifier.fillMaxSize().background(Color(0xFF02050D))) {
                     AndroidView(
                         factory = { VideoView(it).apply {
+                            bootVideo = this
                             setVideoURI(android.net.Uri.parse("android.resource://${context.packageName}/${R.raw.fairy_boot}"))
                             setOnCompletionListener { if (introPhase == "boot") introPhase = "transition" }
                             start()
@@ -722,7 +747,10 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             } else {
-                                Text(greetingForHour(greetingHour), color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, letterSpacing = TypeTokens.labelTracking, modifier = Modifier.align(Alignment.Center).offset(y = eyeSize / 2 + 42.dp))
+                                Column(Modifier.align(Alignment.Center).offset(y = eyeSize / 2 + 52.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(greetingForHour(greetingHour), color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, letterSpacing = TypeTokens.labelTracking)
+                                    Text(greetingSubtitleForHour(greetingHour), color = ThemeTokens.secondary, fontSize = 13.sp, fontFamily = TypeTokens.interfaceFont, modifier = Modifier.padding(top = 12.dp))
+                                }
                             }
                         }
                         if (voiceMode && editingMessageIndex < 0) {
@@ -976,6 +1004,9 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onPause() {
+        greetingPlayer?.release()
+        greetingPlayer = null
+        if (introPhase == "greeting") introPhase = "ready"
         stopSpeech()
         super.onPause()
     }
@@ -1190,6 +1221,10 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        bootVideo?.stopPlayback()
+        bootVideo = null
+        greetingPlayer?.release()
+        greetingPlayer = null
         activeClient?.cancel()
         speechPlayer.close()
         voiceInput.close()
