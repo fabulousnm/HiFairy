@@ -56,7 +56,7 @@ private fun rememberPhoneGaze(enabled: Boolean): Offset {
                     val origin = baseline ?: value.also { baseline = it }
                     val delta = value - origin
                     val target = Offset(
-                        (-delta.x / EyeGazeMotion.gravity * EyeGazeMotion.maxTravel).coerceIn(-EyeGazeMotion.maxTravel, EyeGazeMotion.maxTravel),
+                        (delta.x / EyeGazeMotion.gravity * EyeGazeMotion.maxTravel).coerceIn(-EyeGazeMotion.maxTravel, EyeGazeMotion.maxTravel),
                         (-delta.y / EyeGazeMotion.gravity * EyeGazeMotion.maxTravel).coerceIn(-EyeGazeMotion.maxTravel, EyeGazeMotion.maxTravel)
                     )
                     filtered += (target - filtered) * EyeGazeMotion.sensorSmoothing
