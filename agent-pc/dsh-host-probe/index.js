@@ -23,7 +23,7 @@ export function createProbeServer(controller, token) {
     if (request.method !== 'GET' || request.url !== '/sessions') return respond(response, 404, { error: 'not_found' })
     try {
       const result = await controller.list({}, AbortSignal.timeout(5000))
-      respond(response, 200, { items: result.items.map(({ sessionId, title, presetId, workingDirectory }) => ({ sessionId, title, presetId, workingDirectory })) })
+      respond(response, 200, { items: result.items.map(({ sessionId, title, workingDirectory }) => ({ sessionId, title, workingDirectory })) })
     } catch (error) {
       respond(response, 503, { error: 'host_unavailable', detail: String(error?.message ?? error) })
     }
