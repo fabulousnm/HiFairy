@@ -18,6 +18,8 @@ import kotlinx.coroutines.delay
 import kotlin.random.Random
 import kotlin.math.sin
 
+private data class EyeGlitchBand(val top: Float, val height: Float, val brightness: Float)
+
 /** Fairy-DSH eye geometry and timing, adapted from the local Apache-2.0 reference. */
 @Composable
 internal fun FairyEye(modifier: Modifier = Modifier, active: Boolean = false, completionToken: Int = 0) {
@@ -36,6 +38,19 @@ internal fun FairyEye(modifier: Modifier = Modifier, active: Boolean = false, co
     val focus by animateFloatAsState(if (active) .54f else 0f, tween(340), label = "thinking eyelid")
     var blink by remember { mutableStateOf(false) }
     var glance by remember { mutableFloatStateOf(0f) }
+    var glitchBands by remember { mutableStateOf(emptyList<EyeGlitchBand>()) }
+    LaunchedEffect(active) {
+        glitchBands = emptyList()
+        delay(180)
+        while (true) {
+            glitchBands = List(Random.nextInt(2, 4)) {
+                EyeGlitchBand(Random.nextFloat() * .82f, .025f + Random.nextFloat() * .06f, .12f + Random.nextFloat() * .15f)
+            }
+            delay(Random.nextLong(150, 290))
+            glitchBands = emptyList()
+            delay(if (active) Random.nextLong(4200, 9400) else Random.nextLong(7600, 17000))
+        }
+    }
     LaunchedEffect(active) {
         blink = false
         glance = 0f
@@ -105,6 +120,14 @@ internal fun FairyEye(modifier: Modifier = Modifier, active: Boolean = false, co
                 close()
             }
             drawPath(cover, Color(0xFF1F2573))
+            glitchBands.forEach { band ->
+                val y = center.y - 56f * unit + band.top * 112f * unit
+                drawRect(Color(0xFFB4E4FF).copy(alpha = band.brightness),
+                    topLeft = Offset(center.x - 56f * unit, y),
+                    size = androidx.compose.ui.geometry.Size(112f * unit, band.height * 112f * unit))
+                drawLine(Color(0xFFE3F8FF).copy(alpha = band.brightness * 1.8f),
+                    Offset(center.x - 46f * unit, y), Offset(center.x + 46f * unit, y), .6f * unit)
+            }
         }
         val ringPhase = ring.coerceIn(0f, .36f) / .36f
         if (ring < .36f) drawCircle(Color(0xFFC9F8FF).copy(alpha = (.7f * (1f - ringPhase))), (68f + 82f * ringPhase) * unit, center, style = Stroke(2f * unit))

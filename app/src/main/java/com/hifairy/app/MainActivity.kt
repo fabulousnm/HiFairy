@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.animation.core.*
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Button
 import androidx.compose.material3.TextField
@@ -69,6 +70,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -295,6 +297,8 @@ private fun ActionGlyph(kind: String, color: Color, modifier: Modifier = Modifie
             drawLine(color, Offset(x1 * unit, y1 * unit), Offset(x2 * unit, y2 * unit), stroke, cap = StrokeCap.Round)
         }
         when (kind) {
+            "menu" -> { line(3f, 5f, 17f, 5f); line(3f, 10f, 17f, 10f); line(3f, 15f, 17f, 15f) }
+            "plus" -> { line(10f, 3f, 10f, 17f); line(3f, 10f, 17f, 10f) }
             "copy" -> {
                 line(3f, 13f, 3f, 3f); line(3f, 3f, 13f, 3f); line(13f, 3f, 13f, 5f)
                 line(7f, 7f, 17f, 7f); line(17f, 7f, 17f, 17f)
@@ -355,8 +359,15 @@ private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String
         Column(Modifier.widthIn(max = 300.dp).padding(horizontal = 8.dp), horizontalAlignment = if (isUser) Alignment.End else Alignment.Start) {
             Text(if (isUser) displayName else "Fairy", color = ThemeTokens.secondary, fontSize = 11.sp, fontFamily = TypeTokens.terminalFont, modifier = Modifier.padding(bottom = 5.dp))
             if (!isUser && message.reasoning.isNotEmpty()) {
-                Column(Modifier.fillMaxWidth().background(ThemeTokens.reasoningBubble, RoundedCornerShape(14.dp)).border(1.dp, Color(0xFF294451), RoundedCornerShape(14.dp)).clickable { reasoningExpanded = !reasoningExpanded }.padding(12.dp)) {
-                    Text(if (reasoningExpanded) "思考过程  ⌃" else "思考过程  ›  点击展开", color = ThemeTokens.accent, fontSize = 12.sp)
+                val chevronAngle by animateFloatAsState(if (reasoningExpanded) 90f else 0f, tween(220), label = "reasoning chevron")
+                val reasoningRim by animateColorAsState(if (reasoningExpanded) Color(0xFF3C6575) else Color(0xFF294451), tween(220), label = "reasoning rim")
+                Column(Modifier.fillMaxWidth().animateContentSize(animationSpec = tween(260, easing = FastOutSlowInEasing))
+                    .background(ThemeTokens.reasoningBubble, RoundedCornerShape(14.dp)).border(1.dp, reasoningRim, RoundedCornerShape(14.dp))
+                    .clickable { reasoningExpanded = !reasoningExpanded }.padding(12.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text("思考过程", color = ThemeTokens.accent, fontSize = 12.sp)
+                        Text("›", color = ThemeTokens.accent, fontSize = 18.sp, modifier = Modifier.rotate(chevronAngle))
+                    }
                     if (reasoningExpanded) MarkdownMessage(message.reasoning, Modifier.fillMaxWidth().padding(top = 8.dp))
                 }
                 Spacer(Modifier.height(7.dp))
@@ -721,16 +732,16 @@ class MainActivity : ComponentActivity() {
                         Text("设置", color = ThemeTokens.text, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                     }
                 } else {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text("☰", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { historyOpen = true })
-                        Text("H.D.D Ⅲ", color = ThemeTokens.text, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.brandTracking)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.fillMaxWidth().height(44.dp)) {
+                        Box(Modifier.align(Alignment.CenterStart)) { MessageAction("menu", "打开历史对话", { historyOpen = true }, ThemeTokens.accent) }
+                        Text("H.D.D Ⅲ", color = ThemeTokens.text, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.brandTracking, modifier = Modifier.align(Alignment.Center))
+                        Row(Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically) {
                             MessageAction(if (voiceAutoPlay) "speaker" else "mute", if (voiceAutoPlay) "关闭自动播放" else "开启自动播放", {
                                 voiceAutoPlay = !voiceAutoPlay
                                 secureSettings.voiceAutoPlay = voiceAutoPlay
                                 if (!voiceAutoPlay) stopSpeech()
                             }, ThemeTokens.accent)
-                            Text("＋", color = ThemeTokens.accent, fontSize = 27.sp, modifier = Modifier.clickable { newChat() })
+                            MessageAction("plus", "开始新对话", { newChat() }, ThemeTokens.accent)
                         }
                     }
                 }
