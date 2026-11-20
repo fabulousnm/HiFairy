@@ -7,10 +7,10 @@ import android.widget.VideoView
 import android.widget.TextView
 import android.widget.FrameLayout
 import android.widget.ImageButton
-import android.view.View
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.widget.Toast
+import android.graphics.Canvas as NativeCanvas
 import android.graphics.BitmapFactory
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -97,6 +97,34 @@ import kotlinx.coroutines.withContext
 
 private data class CodeSnippet(val language: String, val code: String)
 
+private class CodeCardTextView(context: Context) : TextView(context) {
+    var codeRanges: List<IntRange> = emptyList()
+        set(value) { field = value; invalidate() }
+
+    override fun onDraw(canvas: NativeCanvas) {
+        val textLayout = layout
+        if (textLayout != null) {
+            val density = resources.displayMetrics.density
+            codeRanges.forEach { range ->
+                val top = textLayout.getLineTop(textLayout.getLineForOffset(range.first)) - 3f * density
+                val bottom = textLayout.getLineBottom(textLayout.getLineForOffset(range.last)) + 5f * density
+                val shadow = GradientDrawable().apply {
+                    setColor(ThemeTokens.codeCardShadow)
+                    cornerRadius = 14f * density
+                    setBounds(0, (top + 3f * density).toInt(), width, (bottom + 3f * density).toInt())
+                }
+                shadow.draw(canvas)
+                GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(ThemeTokens.codeCardTop, ThemeTokens.codeCardBottom)).apply {
+                    cornerRadius = 14f * density
+                    setStroke((density).toInt().coerceAtLeast(1), ThemeTokens.codeCardRim)
+                    setBounds(0, top.toInt(), width, bottom.toInt())
+                }.draw(canvas)
+            }
+        }
+        super.onDraw(canvas)
+    }
+}
+
 private fun codeSnippets(markdown: String): List<CodeSnippet> {
     val found = mutableListOf<CodeSnippet>()
     fun visit(node: Node) {
@@ -182,7 +210,7 @@ private fun MarkdownMessage(message: String, modifier: Modifier = Modifier, copy
     }
     AndroidView(factory = { androidContext ->
         FrameLayout(androidContext).apply {
-            addView(TextView(androidContext).apply {
+            addView(CodeCardTextView(androidContext).apply {
                 tag = "markdown-text"
                 setTextColor(android.graphics.Color.rgb(232, 243, 255)); textSize = 16f
                 setLineSpacing(4f, 1f); setTextIsSelectable(true)
@@ -190,7 +218,7 @@ private fun MarkdownMessage(message: String, modifier: Modifier = Modifier, copy
             }, FrameLayout.LayoutParams(-1, -2))
         }
     }, update = { container ->
-        val textView = container.findViewWithTag<TextView>("markdown-text")
+        val textView = container.findViewWithTag<CodeCardTextView>("markdown-text")
         container.tag = message
         markwon.setMarkdown(textView, normalizeMath(message))
         container.post {
@@ -200,6 +228,7 @@ private fun MarkdownMessage(message: String, modifier: Modifier = Modifier, copy
             val rendered = textView.text.toString()
             val density = container.resources.displayMetrics.density
             var searchFrom = 0
+            val ranges = mutableListOf<IntRange>()
             codeSnippets(message).forEachIndexed { index, snippet ->
                 val code = snippet.code.trimEnd('\n', '\r')
                 if (code.isEmpty()) return@forEachIndexed
@@ -207,26 +236,14 @@ private fun MarkdownMessage(message: String, modifier: Modifier = Modifier, copy
                 if (start < 0) return@forEachIndexed
                 searchFrom = start + code.length
                 val end = (start + code.length - 1).coerceAtMost(rendered.lastIndex)
+                ranges.add(start..end)
                 val top = (textView.top + layout.getLineTop(layout.getLineForOffset(start)) - 3 * density).toInt().coerceAtLeast(0)
-                val bottom = textView.top + layout.getLineBottom(layout.getLineForOffset(end)) + (5 * density).toInt()
-                val height = bottom - top
-                val shadow = View(container.context).apply {
-                    background = GradientDrawable().apply { setColor(ThemeTokens.codeCardShadow); cornerRadius = 14 * density }
-                }
-                container.addView(shadow, 0, FrameLayout.LayoutParams(-1, height, Gravity.TOP).apply { topMargin = top + (3 * density).toInt() })
-                val card = View(container.context).apply {
-                    background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(ThemeTokens.codeCardTop, ThemeTokens.codeCardBottom)).apply {
-                        cornerRadius = 14 * density
-                        setStroke((1 * density).toInt().coerceAtLeast(1), ThemeTokens.codeCardRim)
-                    }
-                }
-                container.addView(card, 1, FrameLayout.LayoutParams(-1, height, Gravity.TOP).apply { topMargin = top })
                 if (!copyCode) return@forEachIndexed
                 val buttonSize = (32 * density).toInt()
                 val button = ImageButton(container.context).apply {
                     setImageResource(R.drawable.ic_copy_code)
                     setColorFilter(android.graphics.Color.rgb(143, 180, 255))
-                    background = GradientDrawable().apply { setColor(ThemeTokens.codeCardTop); cornerRadius = 9 * density }
+                    background = null
                     contentDescription = "复制第 ${index + 1} 段代码"
                     setOnClickListener {
                         (container.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
@@ -237,6 +254,7 @@ private fun MarkdownMessage(message: String, modifier: Modifier = Modifier, copy
                     topMargin = top + (2 * density).toInt()
                 })
             }
+            textView.codeRanges = ranges
         }
     }, modifier = modifier)
 }
@@ -590,8 +608,6 @@ class MainActivity : ComponentActivity() {
                 drawerProgress.snapTo(target)
             }
             val curtain = remember { Animatable(0f) }
-            val pulse = rememberInfiniteTransition(label = "eye pulse")
-            val eyeScale by pulse.animateFloat(initialValue = 0.97f, targetValue = 1.04f, animationSpec = infiniteRepeatable(tween(1700, easing = EaseInOutSine), RepeatMode.Reverse), label = "eye scale")
             LaunchedEffect(introPhase) {
                 if (introPhase == "boot") requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
                 if (introPhase == "transition") {
@@ -681,7 +697,7 @@ class MainActivity : ComponentActivity() {
                             val eyeSize by animateDpAsState(if (hasConversation) 54.dp else 154.dp, tween(550), label = "eye size")
                             val eyeX by animateDpAsState(if (hasConversation) 0.dp else (maxWidth - eyeSize) / 2, tween(550), label = "eye x")
                             val eyeY by animateDpAsState(if (hasConversation) 28.dp else (maxHeight - eyeSize) / 2, tween(550), label = "eye y")
-                            Image(painterResource(R.drawable.fairy_eye), contentDescription = "Fairy 眼徽", modifier = Modifier.offset(eyeX, eyeY).size(eyeSize).scale(eyeScale))
+                            FairyEye(Modifier.offset(eyeX, eyeY).size(eyeSize).semantics { contentDescription = "Fairy 眼徽" }, active = sending && !generationPaused)
                             if (hasConversation) {
                                 Text("FAIRY // ONLINE", color = ThemeTokens.accent, fontSize = 10.sp, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.eyebrowTracking, modifier = Modifier.offset(70.dp, 46.dp))
                                 val scrollState = rememberScrollState()
