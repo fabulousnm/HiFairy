@@ -36,6 +36,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
@@ -58,6 +61,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.CornerRadius
@@ -178,6 +182,11 @@ private object ThemeMotion {
     const val greetingDelayMs = 160L
 }
 
+private object ThemeDimensions {
+    const val fairyAvatarScale = 1.58f
+    const val userAvatarScale = 1.14f
+}
+
 private fun greetingForHour(hour: Int): String = when (hour) {
     in 5..11 -> "早上好，主人"
     in 12..17 -> "下午好，主人"
@@ -288,7 +297,10 @@ private fun ChatAvatar(role: String, avatar: String, modifier: Modifier = Modifi
     }
     Box(modifier.aspectRatio(1f).shadow(if (role == "assistant") 5.dp else 2.dp, CircleShape)
         .clip(CircleShape).border(1.dp, if (role == "assistant") ThemeTokens.accent.copy(alpha = .7f) else ThemeTokens.secondary.copy(alpha = .35f), CircleShape), contentAlignment = Alignment.Center) {
-        val imageModifier = Modifier.fillMaxSize().scale(if (role == "user" && custom == null) 1.14f else 1f)
+        val imageModifier = Modifier.fillMaxSize().scale(
+            if (role == "assistant") ThemeDimensions.fairyAvatarScale
+            else if (custom == null) ThemeDimensions.userAvatarScale else 1f
+        )
         if (custom != null) Image(custom, contentDescription = "我的头像", modifier = imageModifier, contentScale = ContentScale.Crop)
         else Image(painterResource(resource), contentDescription = if (role == "assistant") "Fairy 眼徽" else "我的头像", modifier = imageModifier, contentScale = ContentScale.Crop)
     }
@@ -303,6 +315,17 @@ private fun ActionGlyph(kind: String, color: Color, modifier: Modifier = Modifie
             drawLine(color, Offset(x1 * unit, y1 * unit), Offset(x2 * unit, y2 * unit), stroke, cap = StrokeCap.Round)
         }
         when (kind) {
+            "send" -> {
+                val arrow = Path().apply {
+                    moveTo(2f * unit, 3f * unit)
+                    lineTo(18f * unit, 10f * unit)
+                    lineTo(2f * unit, 17f * unit)
+                    lineTo(5.5f * unit, 10f * unit)
+                    close()
+                }
+                drawPath(arrow, color)
+            }
+            "stop" -> drawRoundRect(color, Offset(4f * unit, 4f * unit), Size(12f * unit, 12f * unit), CornerRadius(2f * unit))
             "menu" -> { line(3f, 5f, 17f, 5f); line(3f, 10f, 17f, 10f); line(3f, 15f, 17f, 15f) }
             "plus" -> { line(10f, 3f, 10f, 17f); line(3f, 10f, 17f, 10f) }
             "copy" -> {
@@ -348,8 +371,40 @@ private fun ActionGlyph(kind: String, color: Color, modifier: Modifier = Modifie
 
 @Composable
 private fun MessageAction(kind: String, label: String, onClick: () -> Unit, color: Color = ThemeTokens.secondary) {
-    Box(Modifier.size(40.dp).semantics { contentDescription = label }.clickable(onClickLabel = label, onClick = onClick), contentAlignment = Alignment.Center) {
-        ActionGlyph(kind, color)
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val iconScale by animateFloatAsState(if (pressed) .86f else 1f, tween(130), label = "action press")
+    val indication = LocalIndication.current
+    Box(Modifier.size(40.dp).semantics { contentDescription = label }
+        .clickable(interactionSource = interaction, indication = indication, onClickLabel = label, onClick = onClick), contentAlignment = Alignment.Center) {
+        ActionGlyph(kind, color, Modifier.scale(iconScale))
+    }
+}
+
+@Composable
+private fun ThinkingIndicator() {
+    val transition = rememberInfiniteTransition(label = "thinking indicator")
+    val phase by transition.animateFloat(0f, 1f, infiniteRepeatable(tween(1200, easing = LinearEasing)), label = "thinking pulse")
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("正在思考", color = ThemeTokens.text, fontSize = 16.sp, fontFamily = TypeTokens.interfaceFont)
+        Canvas(Modifier.padding(start = 5.dp).width(27.dp).height(16.dp)) {
+            repeat(3) { index ->
+                val distance = kotlin.math.abs(phase * 3f - index)
+                val brightness = (1f - distance.coerceAtMost(1f)) * .65f + .3f
+                drawCircle(ThemeTokens.accent.copy(alpha = brightness), radius = 2.dp.toPx(), center = Offset((4 + index * 9).dp.toPx(), size.height / 2f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun FairyOnlineStatus(active: Boolean, modifier: Modifier = Modifier) {
+    val transition = rememberInfiniteTransition(label = "Fairy online")
+    val glow by transition.animateFloat(.45f, 1f, infiniteRepeatable(tween(1300, easing = EaseInOutSine), RepeatMode.Reverse), label = "online glow")
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Canvas(Modifier.size(5.dp)) { drawCircle(ThemeTokens.accent.copy(alpha = if (active) glow else .65f)) }
+        Text(if (active) "FAIRY // WORKING" else "FAIRY // ONLINE", color = ThemeTokens.accent, fontSize = 10.sp,
+            fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.eyebrowTracking)
     }
 }
 
@@ -385,9 +440,12 @@ private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String
                 Box(Modifier.shadow(5.dp, bubbleShape, ambientColor = Color(0x99010310), spotColor = Color(0x77010310))
                     .background(if (isUser) ThemeTokens.userBubble else ThemeTokens.fairyBubble, bubbleShape)
                     .border(1.dp, bubbleRim, bubbleShape).padding(horizontal = 14.dp, vertical = 11.dp)) {
-                    val body = message.content.ifBlank { "正在思考…" }
-                    val hasCode = remember(body) { codeSnippets(body).isNotEmpty() }
-                    MarkdownMessage(body, if (hasCode) Modifier.fillMaxWidth() else Modifier, copyCode = !isUser)
+                    if (!isUser && message.content.isBlank()) ThinkingIndicator()
+                    else {
+                        val body = message.content
+                        val hasCode = remember(body) { codeSnippets(body).isNotEmpty() }
+                        MarkdownMessage(body, if (hasCode) Modifier.fillMaxWidth() else Modifier, copyCode = !isUser)
+                    }
                 }
             }
             if (isUser && message.attachments.isNotEmpty()) {
@@ -739,6 +797,11 @@ class MainActivity : ComponentActivity() {
                 shape = RoundedCornerShape(20.dp)
                 clip = progress > 0f
             }.fillMaxSize().background(ThemeTokens.background).padding(20.dp)) {
+                val pageReveal = remember { Animatable(1f) }
+                LaunchedEffect(page) {
+                    pageReveal.snapTo(0f)
+                    pageReveal.animateTo(1f, tween(280, easing = FastOutSlowInEasing))
+                }
                 if (page == "settings") {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text("‹", color = ThemeTokens.accent, fontSize = 34.sp, modifier = Modifier.clickable { leaveSettings() }.padding(end = 24.dp))
@@ -760,11 +823,11 @@ class MainActivity : ComponentActivity() {
                 }
                 when (page) {
                     "chat" -> {
-                        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().graphicsLayer { alpha = pageReveal.value; translationY = (1f - pageReveal.value) * 8.dp.toPx() }) {
                             val hasConversation = messages.isNotEmpty()
                             val chatReveal = remember { Animatable(0f) }
                             val greetingReveal = remember { Animatable(0f) }
-                            LaunchedEffect(hasConversation) {
+                            LaunchedEffect(currentSessionId, hasConversation) {
                                 if (hasConversation) chatReveal.animateTo(1f, tween(ThemeMotion.revealMs, delayMillis = 140, easing = FastOutSlowInEasing))
                                 else chatReveal.snapTo(0f)
                             }
@@ -780,7 +843,7 @@ class MainActivity : ComponentActivity() {
                             val eyeY by animateDpAsState(if (hasConversation) 28.dp else (maxHeight - eyeSize) / 2, tween(550), label = "eye y")
                             FairyEye(Modifier.offset(eyeX, eyeY).size(eyeSize).semantics { contentDescription = "Fairy 眼徽" }, active = sending && !generationPaused, completionToken = eyeCompletionToken)
                             if (hasConversation) {
-                                Text("FAIRY // ONLINE", color = ThemeTokens.accent, fontSize = 10.sp, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.eyebrowTracking, modifier = Modifier.offset(70.dp, 46.dp).graphicsLayer { alpha = chatReveal.value })
+                                FairyOnlineStatus(sending && !generationPaused, Modifier.offset(70.dp, 46.dp).graphicsLayer { alpha = chatReveal.value })
                                 val scrollState = rememberScrollState()
                                 LaunchedEffect(messages.size) { scrollState.animateScrollTo(scrollState.maxValue) }
                                 LaunchedEffect(messages.lastOrNull()) {
@@ -880,14 +943,16 @@ class MainActivity : ComponentActivity() {
                                 if (editingMessageIndex < 0) MessageAction("mic", "切换语音输入", { voiceMode = true; if (microphoneGranted) voiceInput.prepare() else requestMicrophone.launch(Manifest.permission.RECORD_AUDIO) }, ThemeTokens.accent)
                                 TextField(value = draft, onValueChange = { draft = it }, placeholder = { Text("向 Fairy 提问…", color = ThemeTokens.secondary) }, modifier = Modifier.weight(1f), colors = TextFieldDefaults.colors(focusedTextColor = ThemeTokens.text, unfocusedTextColor = ThemeTokens.text, cursorColor = ThemeTokens.accent, focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
                                 if (editingMessageIndex >= 0) MessageAction("cancel", "取消编辑", { editingMessageIndex = -1; editingAttachments.clear(); draft = "" }, ThemeTokens.text)
-                                Text(if (sending && !generationPaused && !hasOutgoing) "■" else "➤", color = ThemeTokens.accent, fontSize = 25.sp,
-                                    modifier = Modifier.clickable { if (hasOutgoing) sendMessage() else if (sending && !generationPaused) pauseGeneration() })
+                                val stopping = sending && !generationPaused && !hasOutgoing
+                                MessageAction(if (stopping) "stop" else "send", if (stopping) "暂停生成" else "发送消息",
+                                    { if (hasOutgoing) sendMessage() else if (stopping) pauseGeneration() },
+                                    if (stopping || hasOutgoing) ThemeTokens.accent else ThemeTokens.secondary.copy(alpha = .6f))
                             }
                             }
                         }
                     }
                     else -> {
-                        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(top = 28.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                        Column(Modifier.fillMaxSize().graphicsLayer { alpha = pageReveal.value; translationY = (1f - pageReveal.value) * 8.dp.toPx() }.verticalScroll(rememberScrollState()).padding(top = 28.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
                             SettingsCard("PROFILE // IDENTITY", "我的资料") {
                                 Text("昵称", color = ThemeTokens.secondary, fontSize = 12.sp)
                                 TextField(value = displayNameDraft, onValueChange = { displayNameDraft = it.take(20); secureSettings.displayName = displayNameDraft.ifBlank { "绳匠" } }, modifier = Modifier.fillMaxWidth(), colors = darkFieldColors())
