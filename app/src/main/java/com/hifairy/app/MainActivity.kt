@@ -37,6 +37,7 @@ import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.Image
@@ -107,6 +108,7 @@ import org.commonmark.parser.Parser
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 private data class CodeSnippet(val language: String, val code: String)
 
@@ -149,7 +151,7 @@ private fun codeSnippets(markdown: String): List<CodeSnippet> {
     return found
 }
 
-private object ThemeTokens {
+internal object ThemeTokens {
     val background = Color(0xFF070818)
     val surface = Color(0xFF11152C)
     val accent = Color(0xFF8FB4FF)
@@ -920,9 +922,23 @@ class MainActivity : ComponentActivity() {
                             val eyeX by animateDpAsState(if (hasConversation) 0.dp else (maxWidth - eyeSize) / 2, tween(550), label = "eye x")
                             val eyeY by animateDpAsState(if (hasConversation) 28.dp else (maxHeight - eyeSize) / 2, tween(550), label = "eye y")
                             val eyeInteractive = introPhase == "ready" && (!hasConversation || !sending || generationPaused)
+                            var eyeHoldTriggered by remember { mutableStateOf(false) }
                             FairyEye(Modifier.offset(eyeX, eyeY).size(eyeSize)
-                                .combinedClickable(enabled = eyeInteractive,
-                                    onClick = {
+                                .pointerInput(eyeInteractive, hasConversation) {
+                                    if (eyeInteractive) detectTapGestures(
+                                        onPress = {
+                                            if (!hasConversation) {
+                                                val released = withTimeoutOrNull(5000L) { tryAwaitRelease() }
+                                                if (released == null) {
+                                                    eyeHoldTriggered = true
+                                                    eyeCardOpen = false
+                                                    stopBalanceVoice()
+                                                    startActivity(Intent(this@MainActivity, AgentActivity::class.java))
+                                                }
+                                            }
+                                        },
+                                        onTap = {
+                                        if (eyeHoldTriggered) { eyeHoldTriggered = false; return@detectTapGestures }
                                         if (eyeCardOpen) {
                                             eyeCardOpen = false
                                             balanceRequestSerial++
@@ -942,7 +958,8 @@ class MainActivity : ComponentActivity() {
                                                 }
                                             }
                                         }
-                                    }, onDoubleClick = { eyeBlinkToken++ })
+                                    }, onDoubleTap = { eyeBlinkToken++ })
+                                }
                                 .semantics { contentDescription = if (eyeInteractive) "Fairy 眼徽，单击查看账户余额，双击眨眼" else "Fairy 正在工作" },
                                 active = sending && !generationPaused, completionToken = eyeCompletionToken, blinkToken = eyeBlinkToken)
                             if (hasConversation) {

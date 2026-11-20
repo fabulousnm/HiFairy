@@ -74,4 +74,7 @@ class SecureSettings(context: Context) {
 
     fun saveVoiceToken(value: String) = saveSecret("voice_token", value)
     fun voiceToken(): String = readSecret("voice_token")
+
+    fun saveAgentToken(value: String) = saveSecret("agent_token", value)
+    fun agentToken(): String = readSecret("agent_token")
 }

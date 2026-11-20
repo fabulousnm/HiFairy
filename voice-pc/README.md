@@ -30,6 +30,8 @@ Windows 上可双击仓库根目录的 `启动HiFairy语音服务器.cmd`：脚�
 
 `fairy_runtime.py` 统一模型路径、加载和请求配置，供基准脚本及 `server.py` 复用。服务器只绑定 `127.0.0.1:8765`，启动时预热 Fairy 原版模型，随后通过 `/stream` WebSocket 分段发送 32 kHz、单声道、16 位 PCM。测试令牌首次启动时生成在忽略的 `vendor/remote-test-token.txt`，客户端需在首条消息中发送令牌。主应用会将任意长度回答分段发送，不限制回答总字数。
 
+同一地址现提供 `/agent` HTTP 接口，供手机连接当前电脑 DSH Host。Agent 使用独立的 `vendor/agent-mobile-token.txt` Bearer 令牌，网关从电脑外部文件读取桥接令牌，仅转发允许的会话操作至 `127.0.0.1:18765`。启动脚本会生成并显示 Agent 令牌和地址。手机首次进入 Agent 页面时填写该令牌；语音播放设置中的地址仍为 `wss://…/stream`，Agent 自动换算为同域 `https://…/agent`。可运行 `python voice-pc/test_agent_gateway.py` 做隔离测试、`python voice-pc/verify_agent_gateway.py` 做本机真实 Host 只读验证。
+
 ```powershell
 & '<虚拟环境>\Scripts\python.exe' voice-pc\server.py
 & '<虚拟环境>\Scripts\python.exe' voice-pc\client_benchmark.py ws://127.0.0.1:8765/stream

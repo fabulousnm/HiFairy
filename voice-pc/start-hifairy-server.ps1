@@ -10,6 +10,7 @@ $vendor = Join-Path $root 'vendor'
 $cloudflared = Join-Path $vendor 'cloudflared-windows-amd64.exe'
 $server = Join-Path $root 'server.py'
 $tokenFile = Join-Path $vendor 'remote-test-token.txt'
+$agentTokenFile = Join-Path $vendor 'agent-mobile-token.txt'
 $serverLog = Join-Path $output 'server-launch.log'
 $serverError = Join-Path $output 'server-launch-error.log'
 $tunnelLog = Join-Path $output 'tunnel-launch.log'
@@ -38,6 +39,12 @@ function Find-TunnelUrl {
 }
 
 New-Item -ItemType Directory -Path $output -Force | Out-Null
+if (-not (Test-Path -LiteralPath $agentTokenFile)) {
+    $bytes = New-Object byte[] 32
+    $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
+    [IO.File]::WriteAllText($agentTokenFile, ([BitConverter]::ToString($bytes) -replace '-', '').ToLowerInvariant())
+}
 if (-not $StatusOnly) {
     if (-not (Test-Path -LiteralPath $PythonPath)) { throw "Python 虚拟环境不存在：$PythonPath" }
     if (-not (Test-Path -LiteralPath $cloudflared)) { throw "cloudflared 不存在：$cloudflared" }
@@ -80,4 +87,6 @@ Write-Host ''
 Write-Host '请在 HiFairy 手机设置 → 语音播放 中填写：' -ForegroundColor Cyan
 Write-Host "语音服务地址：$socketUrl" -ForegroundColor Green
 Write-Host "访问令牌：$token" -ForegroundColor Yellow
+Write-Host "Agent 地址：$url/agent" -ForegroundColor Green
+Write-Host "Agent 令牌：$([IO.File]::ReadAllText($agentTokenFile).Trim())" -ForegroundColor Yellow
 Write-Host '服务与通道在后台运行；Quick Tunnel 地址在重新建立后可能改变。'

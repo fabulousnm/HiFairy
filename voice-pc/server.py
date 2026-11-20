@@ -15,11 +15,13 @@ from fastapi.responses import FileResponse
 import uvicorn
 
 from fairy_runtime import ROOT, build_request, load_pipeline
+from agent_gateway import router as agent_router
 
 
 TOKEN_FILE = ROOT / "vendor" / "remote-test-token.txt"
 PAGE = ROOT / "web_test.html"
 app = FastAPI()
+app.include_router(agent_router)
 pipeline = None
 token = None
 generation_lock = asyncio.Lock()
