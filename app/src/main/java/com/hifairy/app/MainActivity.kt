@@ -206,6 +206,7 @@ private fun normalizeMath(markdown: String): String = markdown
 @Composable
 private fun MarkdownMessage(message: String, modifier: Modifier = Modifier, copyCode: Boolean = false) {
     val context = LocalContext.current
+    val hasCodeBlock = remember(message) { codeSnippets(message).isNotEmpty() }
     val markwon = remember(context) {
         Markwon.builder(context)
             .usePlugin(MarkwonInlineParserPlugin.create())
@@ -230,10 +231,14 @@ private fun MarkdownMessage(message: String, modifier: Modifier = Modifier, copy
                 setTextColor(android.graphics.Color.rgb(232, 243, 255)); textSize = 16f
                 setLineSpacing(4f, 1f); setTextIsSelectable(true)
                 setLinkTextColor(android.graphics.Color.rgb(143, 180, 255))
-            }, FrameLayout.LayoutParams(-1, -2))
+            }, FrameLayout.LayoutParams(if (hasCodeBlock) -1 else -2, -2))
         }
     }, update = { container ->
         val textView = container.findViewWithTag<CodeCardTextView>("markdown-text")
+        val targetWidth = if (hasCodeBlock) -1 else -2
+        if (textView.layoutParams.width != targetWidth) {
+            textView.layoutParams = (textView.layoutParams as FrameLayout.LayoutParams).apply { width = targetWidth }
+        }
         container.tag = message
         markwon.setMarkdown(textView, normalizeMath(message))
         container.post {
@@ -281,7 +286,8 @@ private fun ChatAvatar(role: String, avatar: String, modifier: Modifier = Modifi
     val custom = remember(avatar) {
         if (role == "user" && avatar == "custom") BitmapFactory.decodeFile(File(context.filesDir, "custom-avatar.jpg").absolutePath)?.asImageBitmap() else null
     }
-    Box(modifier.aspectRatio(1f).clip(CircleShape), contentAlignment = Alignment.Center) {
+    Box(modifier.aspectRatio(1f).shadow(if (role == "assistant") 5.dp else 2.dp, CircleShape)
+        .clip(CircleShape).border(1.dp, if (role == "assistant") ThemeTokens.accent.copy(alpha = .7f) else ThemeTokens.secondary.copy(alpha = .35f), CircleShape), contentAlignment = Alignment.Center) {
         val imageModifier = Modifier.fillMaxSize().scale(if (role == "user" && custom == null) 1.14f else 1f)
         if (custom != null) Image(custom, contentDescription = "我的头像", modifier = imageModifier, contentScale = ContentScale.Crop)
         else Image(painterResource(resource), contentDescription = if (role == "assistant") "Fairy 眼徽" else "我的头像", modifier = imageModifier, contentScale = ContentScale.Crop)
@@ -373,8 +379,15 @@ private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String
                 Spacer(Modifier.height(7.dp))
             }
             if (message.content.isNotBlank() || message.reasoning.isBlank()) {
-                Box(Modifier.background(if (isUser) ThemeTokens.userBubble else ThemeTokens.fairyBubble, RoundedCornerShape(16.dp)).padding(horizontal = 14.dp, vertical = 11.dp)) {
-                    MarkdownMessage(message.content.ifBlank { "正在思考…" }, Modifier.fillMaxWidth(), copyCode = !isUser)
+                val bubbleShape = if (isUser) RoundedCornerShape(topStart = 16.dp, topEnd = 5.dp, bottomStart = 16.dp, bottomEnd = 16.dp)
+                    else RoundedCornerShape(topStart = 5.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 16.dp)
+                val bubbleRim = if (isUser) Color(0xFF43568A) else Color(0xFF2E3853)
+                Box(Modifier.shadow(5.dp, bubbleShape, ambientColor = Color(0x99010310), spotColor = Color(0x77010310))
+                    .background(if (isUser) ThemeTokens.userBubble else ThemeTokens.fairyBubble, bubbleShape)
+                    .border(1.dp, bubbleRim, bubbleShape).padding(horizontal = 14.dp, vertical = 11.dp)) {
+                    val body = message.content.ifBlank { "正在思考…" }
+                    val hasCode = remember(body) { codeSnippets(body).isNotEmpty() }
+                    MarkdownMessage(body, if (hasCode) Modifier.fillMaxWidth() else Modifier, copyCode = !isUser)
                 }
             }
             if (isUser && message.attachments.isNotEmpty()) {
