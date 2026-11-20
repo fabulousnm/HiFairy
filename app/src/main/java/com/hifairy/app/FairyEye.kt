@@ -22,7 +22,7 @@ private data class EyeGlitchBand(val top: Float, val height: Float, val brightne
 
 /** Fairy-DSH eye geometry and timing, adapted from the local Apache-2.0 reference. */
 @Composable
-internal fun FairyEye(modifier: Modifier = Modifier, active: Boolean = false, completionToken: Int = 0) {
+internal fun FairyEye(modifier: Modifier = Modifier, active: Boolean = false, completionToken: Int = 0, blinkToken: Int = 0) {
     val motion = rememberInfiniteTransition(label = "Fairy eye")
     val breath by motion.animateFloat(1f, .92f, infiniteRepeatable(tween(1500, easing = EaseInOutSine), RepeatMode.Reverse), label = "iris breathing")
     val halo by motion.animateFloat(.55f, .95f, infiniteRepeatable(tween(2300, easing = EaseInOutSine), RepeatMode.Reverse), label = "halo")
@@ -37,7 +37,15 @@ internal fun FairyEye(modifier: Modifier = Modifier, active: Boolean = false, co
     }
     val focus by animateFloatAsState(if (active) .54f else 0f, tween(340), label = "thinking eyelid")
     var blink by remember { mutableStateOf(false) }
+    var tappedBlink by remember { mutableStateOf(false) }
     var glance by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(blinkToken) {
+        if (blinkToken > 0) {
+            tappedBlink = true
+            delay(150)
+            tappedBlink = false
+        }
+    }
     var glitchBands by remember { mutableStateOf(emptyList<EyeGlitchBand>()) }
     LaunchedEffect(active) {
         glitchBands = emptyList()
@@ -69,7 +77,7 @@ internal fun FairyEye(modifier: Modifier = Modifier, active: Boolean = false, co
             }
         }
     }
-    val lid by animateFloatAsState(if (blink) 1f else focus, tween(if (blink) 135 else 420, easing = FastOutSlowInEasing), label = "blink")
+    val lid by animateFloatAsState(if (blink || tappedBlink) 1f else focus, tween(if (blink || tappedBlink) 135 else 420, easing = FastOutSlowInEasing), label = "blink")
     val gaze by animateFloatAsState(glance, tween(360, easing = FastOutSlowInEasing), label = "glance")
     val celebrationScale = if (completion.value < 1f) 1f + .13f * sin(completion.value * Math.PI).toFloat() else 1f
     Canvas(modifier.graphicsLayer { scaleX = celebrationScale; scaleY = celebrationScale }) {

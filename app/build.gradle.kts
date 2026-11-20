@@ -40,4 +40,5 @@ dependencies {
     annotationProcessor("io.noties:prism4j-bundler:2.0.0")
     implementation("com.squareup.okhttp3:okhttp:5.3.0")
     implementation(files("../voice-lab/vendor/sherpa-static.aar"))
+    testImplementation("junit:junit:4.13.2")
 }

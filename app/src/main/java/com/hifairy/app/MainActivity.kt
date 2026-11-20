@@ -20,12 +20,17 @@ import android.content.Intent
 import android.content.pm.ActivityInfo
 import java.io.File
 import java.time.LocalTime
+import java.time.Instant
+import java.time.Duration
+import java.math.BigDecimal
+import java.util.Locale
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.gestures.Orientation
@@ -419,6 +424,38 @@ private fun FairyOnlineStatus(active: Boolean, modifier: Modifier = Modifier) {
 }
 
 @Composable
+private fun EyeBalanceCard(balance: AccountBalance?, loading: Boolean, now: Instant, modifier: Modifier = Modifier) {
+    val tariff = PeakTariff.current(now)
+    val remaining = tariff?.let { Duration.between(now, it.nextAt).seconds.coerceAtLeast(0) }
+    val clock = remaining?.let { String.format(Locale.US, "%02d:%02d:%02d", it / 3600, it / 60 % 60, it % 60) }
+    val badgeColor = if (tariff?.peak == true) Color(0xFFF0A13A) else Color(0xFF3ED873)
+    val shape = RoundedCornerShape(17.dp)
+    Column(modifier.shadow(15.dp, shape, ambientColor = Color(0xCC030616), spotColor = Color(0xCC030616))
+        .background(ThemeTokens.surface, shape).border(1.dp, Color(0xFF4B6192), shape)
+        .padding(horizontal = 16.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        Text("FAIRY // ENERGY STATUS", color = ThemeTokens.accent, fontSize = 10.sp,
+            fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.eyebrowTracking)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("账户余额", color = ThemeTokens.secondary, fontSize = 13.sp)
+            Text(when {
+                loading -> "读取中…"
+                balance?.amount != null -> "${if (balance.currency == "CNY") "¥" else "${balance.currency} "}${balance.amount.stripTrailingZeros().toPlainString()}"
+                else -> "—"
+            }, color = ThemeTokens.text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.terminalFont)
+        }
+        if (balance?.error != null && !loading) Text(balance.error, color = ThemeTokens.secondary, fontSize = 11.sp)
+        Spacer(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF344363)))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(if (tariff == null) "—" else if (tariff.peak) "峰" else "谷", color = ThemeTokens.background, fontSize = 12.sp,
+                modifier = Modifier.background(badgeColor, RoundedCornerShape(5.dp)).padding(horizontal = 5.dp, vertical = 2.dp))
+            Text(if (clock != null) "${clock} 后转${if (tariff?.peak == true) "谷" else "峰"}价" else "峰谷时段资料待更新",
+                color = badgeColor, fontSize = 12.sp, fontFamily = TypeTokens.terminalFont)
+        }
+        Text("峰  工作日 09–12、14–18  ·  谷  其余时段", color = ThemeTokens.secondary, fontSize = 10.sp)
+    }
+}
+
+@Composable
 private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String, showRegenerate: Boolean, showContinue: Boolean, showEdit: Boolean, playing: Boolean, animateEntrance: Boolean, onCopy: () -> Unit, onEdit: () -> Unit, onRegenerate: () -> Unit, onContinue: () -> Unit, onReplay: () -> Unit) {
     val isUser = message.role == "user"
     val context = LocalContext.current
@@ -567,6 +604,7 @@ class MainActivity : ComponentActivity() {
     private var greetingHour by mutableIntStateOf(LocalTime.now().hour)
     private var eyeCompletionToken by mutableIntStateOf(0)
     private var greetingPlayer: MediaPlayer? = null
+    private var balancePlayer: MediaPlayer? = null
     private var bootVideo: VideoView? = null
     private var draft by mutableStateOf("")
     private val messages = mutableStateListOf<ChatMessage>()
@@ -711,12 +749,37 @@ class MainActivity : ComponentActivity() {
             var dragStartedOpen by remember { mutableStateOf(false) }
             var draggingDrawer by remember { mutableStateOf(false) }
             var settleVersion by remember { mutableIntStateOf(0) }
+            var eyeCardOpen by remember { mutableStateOf(false) }
+            var balanceLoading by remember { mutableStateOf(false) }
+            var accountBalance by remember { mutableStateOf<AccountBalance?>(null) }
+            var balanceRequestSerial by remember { mutableIntStateOf(0) }
+            var eyeBlinkToken by remember { mutableIntStateOf(0) }
+            var balanceClock by remember { mutableStateOf(Instant.now()) }
+            LaunchedEffect(eyeCardOpen) {
+                while (eyeCardOpen) {
+                    balanceClock = Instant.now()
+                    kotlinx.coroutines.delay(1000)
+                }
+            }
+            LaunchedEffect(currentSessionId) {
+                eyeCardOpen = false
+                balanceRequestSerial++
+                stopBalanceVoice()
+            }
+            LaunchedEffect(page, sending, generationPaused, historyOpen) {
+                if (page != "chat" || sending && !generationPaused || historyOpen) {
+                    eyeCardOpen = false
+                    balanceRequestSerial++
+                    stopBalanceVoice()
+                }
+            }
             val closeDrawer = { historyOpen = false; chatOpenedFromHistory = false; settleVersion++ }
             BackHandler(page == "settings" || historyOpen || draggingDrawer || drawerProgress.value > 0.01f || editingMessageIndex >= 0 || chatOpenedFromHistory || (page == "chat" && introPhase != "boot" && introPhase != "transition")) {
                 when {
                     voiceHolding -> { voiceInput.finish(true); voiceHolding = false; voiceCancel = false }
                     page == "settings" -> leaveSettings()
                     historyOpen || draggingDrawer || drawerProgress.value > 0.01f -> closeDrawer()
+                    eyeCardOpen -> { eyeCardOpen = false; balanceRequestSerial++; stopBalanceVoice() }
                     editingMessageIndex >= 0 -> { editingMessageIndex = -1; draft = "" }
                     chatOpenedFromHistory -> { chatOpenedFromHistory = false; historyOpen = true }
                     voiceMode -> { voiceMode = false; voiceStatus = "" }
@@ -824,13 +887,13 @@ class MainActivity : ComponentActivity() {
                     }
                 } else {
                     Box(Modifier.fillMaxWidth().height(44.dp)) {
-                        Box(Modifier.align(Alignment.CenterStart)) { MessageAction("menu", "打开历史对话", { historyOpen = true }, ThemeTokens.accent) }
+                        Box(Modifier.align(Alignment.CenterStart)) { MessageAction("menu", "打开历史对话", { eyeCardOpen = false; stopBalanceVoice(); historyOpen = true }, ThemeTokens.accent) }
                         Text("H.D.D Ⅲ", color = ThemeTokens.text, fontSize = 16.sp, fontWeight = FontWeight.Bold, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.brandTracking, modifier = Modifier.align(Alignment.Center))
                         Row(Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically) {
                             MessageAction(if (voiceAutoPlay) "speaker" else "mute", if (voiceAutoPlay) "关闭自动播放" else "开启自动播放", {
                                 voiceAutoPlay = !voiceAutoPlay
                                 secureSettings.voiceAutoPlay = voiceAutoPlay
-                                if (!voiceAutoPlay) stopSpeech()
+                                if (!voiceAutoPlay) { stopSpeech(); stopBalanceVoice() }
                             }, ThemeTokens.accent)
                             MessageAction("plus", "开始新对话", { newChat() }, ThemeTokens.accent)
                         }
@@ -856,7 +919,32 @@ class MainActivity : ComponentActivity() {
                             val eyeSize by animateDpAsState(if (hasConversation) 54.dp else 154.dp, tween(550), label = "eye size")
                             val eyeX by animateDpAsState(if (hasConversation) 0.dp else (maxWidth - eyeSize) / 2, tween(550), label = "eye x")
                             val eyeY by animateDpAsState(if (hasConversation) 28.dp else (maxHeight - eyeSize) / 2, tween(550), label = "eye y")
-                            FairyEye(Modifier.offset(eyeX, eyeY).size(eyeSize).semantics { contentDescription = "Fairy 眼徽" }, active = sending && !generationPaused, completionToken = eyeCompletionToken)
+                            val eyeInteractive = introPhase == "ready" && (!hasConversation || !sending || generationPaused)
+                            FairyEye(Modifier.offset(eyeX, eyeY).size(eyeSize)
+                                .combinedClickable(enabled = eyeInteractive,
+                                    onClick = {
+                                        if (eyeCardOpen) {
+                                            eyeCardOpen = false
+                                            balanceRequestSerial++
+                                            stopBalanceVoice()
+                                        } else {
+                                            eyeCardOpen = true
+                                            balanceLoading = true
+                                            accountBalance = null
+                                            val serial = ++balanceRequestSerial
+                                            scope.launch {
+                                                val result = withContext(Dispatchers.IO) { DeepSeekBalance.fetch(secureSettings.apiKey()) }
+                                                if (eyeCardOpen && serial == balanceRequestSerial) {
+                                                    accountBalance = result
+                                                    balanceLoading = false
+                                                    if (voiceAutoPlay && result.currency == "CNY" && result.amount != null)
+                                                        playBalanceVoice(result.amount < BigDecimal.TEN)
+                                                }
+                                            }
+                                        }
+                                    }, onDoubleClick = { eyeBlinkToken++ })
+                                .semantics { contentDescription = if (eyeInteractive) "Fairy 眼徽，单击查看账户余额，双击眨眼" else "Fairy 正在工作" },
+                                active = sending && !generationPaused, completionToken = eyeCompletionToken, blinkToken = eyeBlinkToken)
                             if (hasConversation) {
                                 FairyOnlineStatus(sending && !generationPaused, Modifier.offset(70.dp, 46.dp).graphicsLayer { alpha = chatReveal.value })
                                 val scrollState = rememberScrollState()
@@ -883,6 +971,11 @@ class MainActivity : ComponentActivity() {
                                 }
                             } else {
                                 Text(greetingForHour(greetingHour), color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.interfaceFont, letterSpacing = TypeTokens.labelTracking, modifier = Modifier.align(Alignment.Center).offset(y = eyeSize / 2 + 42.dp).graphicsLayer { alpha = greetingReveal.value; translationY = (1f - greetingReveal.value) * 12.dp.toPx() })
+                            }
+                            val eyeCardWidth = (maxWidth - 12.dp).coerceAtMost(300.dp)
+                            if (eyeCardOpen) Box(Modifier.align(Alignment.TopStart).padding(top = 96.dp)) {
+                                EyeBalanceCard(accountBalance, balanceLoading, balanceClock,
+                                    Modifier.width(eyeCardWidth))
                             }
                         }
                         if (voiceMode && editingMessageIndex < 0) {
@@ -1145,7 +1238,29 @@ class MainActivity : ComponentActivity() {
         playingSessionId = 0L
     }
 
+    private fun playBalanceVoice(low: Boolean) {
+        stopSpeech()
+        stopBalanceVoice()
+        val resource = if (low) R.raw.fairy_balance_low else R.raw.fairy_balance_ok
+        val player = MediaPlayer.create(this, resource) ?: return
+        balancePlayer = player
+        player.setOnCompletionListener {
+            if (balancePlayer === player) balancePlayer = null
+            player.release()
+        }
+        player.start()
+    }
+
+    private fun stopBalanceVoice() {
+        balancePlayer?.let { player ->
+            balancePlayer = null
+            try { player.stop() } catch (_: Exception) { }
+            player.release()
+        }
+    }
+
     override fun onPause() {
+        stopBalanceVoice()
         greetingPlayer?.release()
         greetingPlayer = null
         if (introPhase == "greeting") introPhase = "ready"
@@ -1309,6 +1424,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun newChat() {
+        stopBalanceVoice()
         stopSpeech()
         chatOpenedFromHistory = historyOpen
         historyOpen = false
@@ -1324,6 +1440,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openSession(session: ChatSession) {
+        stopBalanceVoice()
         stopSpeech()
         chatOpenedFromHistory = true
         historyOpen = false
@@ -1364,6 +1481,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        stopBalanceVoice()
         bootVideo?.stopPlayback()
         bootVideo = null
         greetingPlayer?.release()
