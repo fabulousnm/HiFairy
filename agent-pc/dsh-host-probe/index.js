@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import { readFileSync } from 'node:fs'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
-import { RECENT_MESSAGE_LIMIT, recentItems, findDetail } from './recent.js'
+import { HOST_MESSAGE_WINDOW, recentItems, findDetail } from './recent.js'
 
 export const name = 'hifairy-dsh-host-probe'
 export const inject = ['sessionController']
@@ -57,21 +57,31 @@ export function createProbeServer(controller, token, options = {}) {
     }
     if (request.method !== 'GET') return respond(response, 405, { error: 'method_not_allowed' })
     const recentMatch = /^\/sessions\/(session-[a-z0-9-]+)\/recent$/.exec(request.url ?? '')
-    const detailMatch = /^\/sessions\/(session-[a-z0-9-]+)\/details\/(reasoning|tool)\/([a-zA-Z0-9_-]+)$/.exec(request.url ?? '')
+    const detailMatch = /^\/sessions\/(session-[a-z0-9-]+)\/details\/(reasoning|tool|terminal|commentary)\/([a-zA-Z0-9_-]+)$/.exec(request.url ?? '')
     if (recentMatch || detailMatch) {
       const sessionId = recentMatch?.[1] ?? detailMatch[1]
-      let stream
       try {
-        stream = controller.follow({ address: { kind: 'session', sessionId }, maxMessages: RECENT_MESSAGE_LIMIT, assistantStream: false }, AbortSignal.timeout(15000))[Symbol.asyncIterator]()
-        const first = await stream.next()
-        if (first.done || first.value?.type !== 'snapshot') return respond(response, 503, { error: 'snapshot_unavailable' })
-        if (recentMatch) return respond(response, 200, recentItems(first.value))
-        const detail = findDetail(first.value, detailMatch[2], detailMatch[3])
-        return detail ? respond(response, 200, detail) : respond(response, 404, { error: 'detail_not_found' })
+        let window = HOST_MESSAGE_WINDOW
+        while (window <= 1920) {
+          const stream = controller.follow({ address: { kind: 'session', sessionId }, maxMessages: window, assistantStream: false }, AbortSignal.timeout(15000))[Symbol.asyncIterator]()
+          let snapshot
+          try {
+            const first = await stream.next()
+            if (first.done || first.value?.type !== 'snapshot') return respond(response, 503, { error: 'snapshot_unavailable' })
+            snapshot = first.value
+          } finally { await stream.return?.() }
+          if (recentMatch) {
+            const recent = recentItems(snapshot)
+            if (recent.turnCount >= 15 || !snapshot.hasMore || window === 1920) return respond(response, 200, recent)
+          } else {
+            const detail = findDetail(snapshot, detailMatch[2], detailMatch[3])
+            if (detail) return respond(response, 200, detail)
+            if (!snapshot.hasMore || window === 1920) return respond(response, 404, { error: 'detail_not_found' })
+          }
+          window *= 2
+        }
       } catch (error) {
         return respond(response, 503, { error: 'host_unavailable', detail: String(error?.message ?? error) })
-      } finally {
-        await stream?.return?.()
       }
     }
     const match = /^\/sessions\/(session-[a-z0-9-]+)\/(snapshot|events)$/.exec(request.url ?? '')

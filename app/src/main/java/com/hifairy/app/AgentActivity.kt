@@ -47,6 +47,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -77,17 +78,42 @@ private data class AgentItem(val id: String, val kind: String, val text: String,
 private fun AgentRecordCard(item: AgentItem, expandedText: String?, onClick: () -> Unit) {
     val tint = when (item.kind) {
         "tool" -> Color(0xFF83B9CA)
+        "terminal" -> Color(0xFF83B9CA)
         "work" -> Color(0xFFB7A3DF)
+        "commentary" -> Color(0xFFB7A3DF)
         else -> ThemeTokens.accent
     }
-    Column(Modifier.fillMaxWidth().padding(start = 56.dp, bottom = 10.dp)
-        .background(ThemeTokens.surface, RoundedCornerShape(16.dp))
-        .border(1.dp, tint.copy(alpha = .35f), RoundedCornerShape(16.dp))
-        .clickable(onClick = onClick).padding(12.dp)) {
-        Text((when (item.kind) { "tool" -> "⚙  "; "work" -> "◇  "; else -> "◌  " }) + item.title + if (expandedText == null) "  ›" else "  ⌄",
-            color = tint, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-        Text(if (expandedText == null) item.preview else expandedText, color = ThemeTokens.text,
-            fontSize = 12.sp, lineHeight = 18.sp, modifier = Modifier.padding(top = 6.dp))
+    Column(Modifier.fillMaxWidth().padding(start = 44.dp, bottom = 3.dp), horizontalAlignment = Alignment.Start) {
+        Row(Modifier.widthIn(max = 300.dp).background(ThemeTokens.reasoningBubble, RoundedCornerShape(8.dp))
+            .border(1.dp, tint.copy(alpha = .24f), RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text((when (item.kind) { "tool" -> "⚙"; "terminal" -> "⌁"; "work" -> "◇"; else -> "◌" }) + "  " + item.title,
+                color = tint, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+            Text(if (expandedText == null) "  ›" else "  ⌄", color = tint, fontSize = 11.sp)
+        }
+        if (expandedText != null) Text(expandedText, color = ThemeTokens.text, fontSize = 11.sp, lineHeight = 16.sp,
+            modifier = Modifier.widthIn(max = 300.dp).heightIn(max = 260.dp).padding(top = 4.dp)
+                .background(ThemeTokens.surface, RoundedCornerShape(9.dp))
+                .border(1.dp, tint.copy(alpha = .25f), RoundedCornerShape(9.dp))
+                .verticalScroll(rememberScrollState()).padding(9.dp))
+    }
+}
+
+@Composable
+private fun AgentHistoryLoading() {
+    Column(Modifier.background(Brush.verticalGradient(listOf(ThemeTokens.surface, ThemeTokens.reasoningBubble)), RoundedCornerShape(24.dp))
+        .border(1.dp, ThemeTokens.accent.copy(alpha = .22f), RoundedCornerShape(24.dp))
+        .padding(horizontal = 30.dp, vertical = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.size(72.dp), contentAlignment = Alignment.Center) {
+            FairyEye(Modifier.size(54.dp))
+            androidx.compose.material3.CircularProgressIndicator(Modifier.fillMaxSize(), color = ThemeTokens.accent,
+                strokeWidth = 2.dp, trackColor = ThemeTokens.accent.copy(alpha = .12f))
+        }
+        Spacer(Modifier.height(16.dp))
+        Text("正在接入会话", color = ThemeTokens.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text("读取最近 15 轮问答", color = ThemeTokens.secondary, fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
+        androidx.compose.material3.LinearProgressIndicator(Modifier.width(150.dp).height(3.dp), color = ThemeTokens.accent,
+            trackColor = ThemeTokens.accent.copy(alpha = .13f))
     }
 }
 
@@ -425,10 +451,6 @@ class AgentActivity : ComponentActivity() {
                         val scroll = rememberScrollState()
                         LaunchedEffect(items.size, liveText) { if (!scroll.isScrollInProgress && scroll.maxValue - scroll.value < 120) scroll.scrollTo(scroll.maxValue) }
                         Column(Modifier.fillMaxSize().padding(top = 94.dp).verticalScroll(scroll)) {
-                            if (loadingHistory && loadedSession != selected) {
-                                androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth(), color = ThemeTokens.accent)
-                                Text("正在读取最近 15 条记录…", color = ThemeTokens.secondary, fontSize = 12.sp)
-                            }
                             items.forEachIndexed { index, item ->
                                 if (item.kind == "user" || item.kind == "assistant") {
                                     ChatBubble(ChatMessage(item.kind, item.text), settings.displayName, settings.avatar,
@@ -464,6 +486,7 @@ class AgentActivity : ComponentActivity() {
                             if (pendingPrompt.isNotBlank() || liveText.isNotBlank() || liveReasoning.isNotBlank())
                                 ChatBubble(ChatMessage("assistant", liveText), settings.displayName, settings.avatar, false, false, false, false, true, {}, {}, {}, {}, {}, showActions = false, assistantName = "DSH")
                         }
+                        if (loadingHistory && loadedSession != selected) Box(Modifier.align(Alignment.Center)) { AgentHistoryLoading() }
                     }
                 }
                 if (error.isNotBlank()) Text(error, color = ThemeTokens.accent, fontSize = 12.sp)

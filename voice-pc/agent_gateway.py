@@ -33,7 +33,7 @@ def _bridge_path(path: str) -> str:
     parts = path.split("/")
     valid_session = len(parts) >= 3 and parts[0] == "sessions" and parts[1].startswith("session-")
     valid_suffix = len(parts) == 3 and parts[2] in {"messages", "snapshot", "events", "recent"}
-    valid_detail = len(parts) == 5 and parts[2] == "details" and parts[3] in {"reasoning", "tool"} and parts[4] and all(c.isascii() and (c.isalnum() or c in "-_") for c in parts[4])
+    valid_detail = len(parts) == 5 and parts[2] == "details" and parts[3] in {"reasoning", "tool", "terminal", "commentary"} and parts[4] and all(c.isascii() and (c.isalnum() or c in "-_") for c in parts[4])
     if valid_session and (valid_suffix or valid_detail):
         suffix = parts[1][8:]
         if suffix and all(c.islower() or c.isdigit() or c == "-" for c in suffix):

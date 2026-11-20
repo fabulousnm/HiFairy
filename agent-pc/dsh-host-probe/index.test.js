@@ -68,3 +68,23 @@ test('creates in the configured workspace and queues a message in that Host sess
     await new Promise(resolve => server.close(resolve))
   }
 })
+
+test('expands the Host window until fifteen real turns are available', async () => {
+  const windows = []
+  const makeSnapshot = (count, hasMore) => ({ type: 'snapshot', hasMore, records: Array.from({ length: count }, (_, index) => ({
+    type: 'event', event: { seq: index + 1, type: 'user/message', data: {
+      role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: `question ${index}` }] } } })) })
+  const server = createProbeServer({ follow(input) {
+    windows.push(input.maxMessages)
+    return (async function* () { yield input.maxMessages === 240 ? makeSnapshot(8, true) : makeSnapshot(20, false) })()
+  } }, 'd'.repeat(40))
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/sessions/session-abc/recent`,
+      { headers: { Authorization: `Bearer ${'d'.repeat(40)}` } })
+    assert.equal(response.status, 200)
+    const data = await response.json()
+    assert.equal(data.turnCount, 15)
+    assert.deepEqual(windows, [240, 480])
+  } finally { await new Promise(resolve => server.close(resolve)) }
+})
