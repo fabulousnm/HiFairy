@@ -7,13 +7,14 @@ import java.net.URL
 
 data class StreamResult(val citations: List<ChatCitation>, val serverToolCalls: String, val finishReason: String)
 
-class DeepSeekClient {
+class DeepSeekClient(private val persona: String) {
     @Volatile private var connection: HttpURLConnection? = null
 
     fun cancel() { connection?.disconnect() }
 
     fun stream(apiKey: String, model: String, effort: String, history: List<ChatMessage>, webSearch: Boolean, continuePrefix: Boolean, onText: (String) -> Unit, onReasoning: (String) -> Unit): StreamResult {
         val messages = JSONArray()
+        messages.put(JSONObject().put("role", "system").put("content", persona))
         history.forEach { message ->
             val content: Any = if (message.role == "user" && message.attachments.isNotEmpty()) JSONArray().apply {
                 message.attachments.forEach { put(JSONObject().put("type", "file").put("file_id", it.fileId)) }

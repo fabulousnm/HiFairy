@@ -1306,7 +1306,7 @@ class MainActivity : ComponentActivity() {
         generationWebSearch = !continuing && webSearch
         sending = true
         val id = ++requestId
-        val client = DeepSeekClient()
+        val client = DeepSeekClient(assets.open("fairy-persona.txt").bufferedReader(Charsets.UTF_8).use { it.readText() })
         activeClient = client
         Thread {
             val answer = StringBuilder(previous.content)

@@ -1,5 +1,9 @@
 # DeepSeek 聊天接入
 
+## Fairy 人格（2026-11-20）
+
+普通 Chat 模式此前只发送会话消息，现每次请求先插入独立的 Fairy 系统消息，内容保存在 `app/src/main/assets/fairy-persona.txt`。人格根据参考仓库 `references/fairy-zzz-plugin/presets/fairy-mode.patch.yml` 的身份、称呼、语气和可靠性约束改写为手机聊天场景；未复制 DSH 电脑工作区设定，也不让普通 Chat 声称可执行电脑命令。系统消息不写入本地聊天记录，因此新会话、旧会话继续提问、重新生成与续答均使用同一版本的人格。构建通过，实际回答风格仍需真机 API 验证。
+
 2026-11-18 已实现首版：设置页输入 DeepSeek API Key，通过官方 `/models` 接口获取可用模型，在下拉菜单中选择模型及其支持的思考强度；发送文本后调用官方 Chat Completions 流式接口，将 `delta.content` 逐段显示。API Key 使用 Android Keystore AES-GCM 加密后保存在私有 SharedPreferences；模型和强度是普通设置。缺少 Key 时跳转设置页。
 
 当前默认模型为 `deepseek-flash`，思考强度为 `high`。模型列表来自官方接口；列表请求失败时显示错误并保留已保存的模型，等待刷新。尚未接入分页与长会话裁剪。构建通过，真实 API 请求待用户在应用内填写 Key 后验证。
