@@ -2,7 +2,6 @@ package com.hifairy.app
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -14,16 +13,26 @@ import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.graphicsLayer
 import kotlinx.coroutines.delay
 import kotlin.random.Random
+import kotlin.math.sin
 
 /** Fairy-DSH eye geometry and timing, adapted from the local Apache-2.0 reference. */
 @Composable
-internal fun FairyEye(modifier: Modifier = Modifier, active: Boolean = false) {
+internal fun FairyEye(modifier: Modifier = Modifier, active: Boolean = false, completionToken: Int = 0) {
     val motion = rememberInfiniteTransition(label = "Fairy eye")
     val breath by motion.animateFloat(1f, .92f, infiniteRepeatable(tween(1500, easing = EaseInOutSine), RepeatMode.Reverse), label = "iris breathing")
     val halo by motion.animateFloat(.55f, .95f, infiniteRepeatable(tween(2300, easing = EaseInOutSine), RepeatMode.Reverse), label = "halo")
     val ring by motion.animateFloat(0f, 1f, infiniteRepeatable(tween(4000, easing = LinearEasing)), label = "pulse ring")
+    val scan by motion.animateFloat(0f, 1f, infiniteRepeatable(tween(1300, easing = LinearEasing)), label = "working scan")
+    val completion = remember { Animatable(1f) }
+    LaunchedEffect(completionToken) {
+        if (completionToken > 0) {
+            completion.snapTo(0f)
+            completion.animateTo(1f, tween(950, easing = FastOutSlowInEasing))
+        }
+    }
     val focus by animateFloatAsState(if (active) .54f else 0f, tween(340), label = "thinking eyelid")
     var blink by remember { mutableStateOf(false) }
     var glance by remember { mutableFloatStateOf(0f) }
@@ -47,7 +56,8 @@ internal fun FairyEye(modifier: Modifier = Modifier, active: Boolean = false) {
     }
     val lid by animateFloatAsState(if (blink) 1f else focus, tween(if (blink) 135 else 420, easing = FastOutSlowInEasing), label = "blink")
     val gaze by animateFloatAsState(glance, tween(360, easing = FastOutSlowInEasing), label = "glance")
-    Canvas(modifier) {
+    val celebrationScale = if (completion.value < 1f) 1f + .13f * sin(completion.value * Math.PI).toFloat() else 1f
+    Canvas(modifier.graphicsLayer { scaleX = celebrationScale; scaleY = celebrationScale }) {
         val unit = size.minDimension / 160f
         val center = Offset(size.width / 2f, size.height / 2f)
         fun circle(color: Color, radius: Float, at: Offset = center) = drawCircle(color, radius * unit, at)
@@ -74,6 +84,18 @@ internal fun FairyEye(modifier: Modifier = Modifier, active: Boolean = false) {
         }
         val eyeClip = Path().apply { addOval(androidx.compose.ui.geometry.Rect(center, 56f * unit)) }
         clipPath(eyeClip) {
+            if (active) {
+                val scanY = center.y - 56f * unit + scan * 112f * unit
+                drawRect(
+                    Brush.verticalGradient(
+                        listOf(Color.Transparent, Color(0xFFCDEFFF).copy(alpha = .42f), Color.Transparent),
+                        startY = scanY - 12f * unit,
+                        endY = scanY + 12f * unit
+                    ),
+                    topLeft = Offset(center.x - 56f * unit, scanY - 12f * unit),
+                    size = androidx.compose.ui.geometry.Size(112f * unit, 24f * unit)
+                )
+            }
             val edge = center.y - (55f - 92f * lid) * unit
             val cover = Path().apply {
                 moveTo(center.x - 60f * unit, center.y - 120f * unit)
@@ -86,5 +108,8 @@ internal fun FairyEye(modifier: Modifier = Modifier, active: Boolean = false) {
         }
         val ringPhase = ring.coerceIn(0f, .36f) / .36f
         if (ring < .36f) drawCircle(Color(0xFFC9F8FF).copy(alpha = (.7f * (1f - ringPhase))), (68f + 82f * ringPhase) * unit, center, style = Stroke(2f * unit))
+        if (completion.value < 1f) {
+            drawCircle(Color(0xFFBEE8FF).copy(alpha = .8f * (1f - completion.value)), (68f + 22f * completion.value) * unit, center, style = Stroke(2f * unit))
+        }
     }
 }

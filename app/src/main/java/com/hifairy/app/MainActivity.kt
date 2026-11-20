@@ -454,6 +454,7 @@ class MainActivity : ComponentActivity() {
     private var historyOpen by mutableStateOf(false)
     private var introPhase by mutableStateOf("boot")
     private var greetingHour by mutableIntStateOf(LocalTime.now().hour)
+    private var eyeCompletionToken by mutableIntStateOf(0)
     private var greetingPlayer: MediaPlayer? = null
     private var bootVideo: VideoView? = null
     private var draft by mutableStateOf("")
@@ -726,7 +727,7 @@ class MainActivity : ComponentActivity() {
                             val eyeSize by animateDpAsState(if (hasConversation) 54.dp else 154.dp, tween(550), label = "eye size")
                             val eyeX by animateDpAsState(if (hasConversation) 0.dp else (maxWidth - eyeSize) / 2, tween(550), label = "eye x")
                             val eyeY by animateDpAsState(if (hasConversation) 28.dp else (maxHeight - eyeSize) / 2, tween(550), label = "eye y")
-                            FairyEye(Modifier.offset(eyeX, eyeY).size(eyeSize).semantics { contentDescription = "Fairy 眼徽" }, active = sending && !generationPaused)
+                            FairyEye(Modifier.offset(eyeX, eyeY).size(eyeSize).semantics { contentDescription = "Fairy 眼徽" }, active = sending && !generationPaused, completionToken = eyeCompletionToken)
                             if (hasConversation) {
                                 Text("FAIRY // ONLINE", color = ThemeTokens.accent, fontSize = 10.sp, fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.eyebrowTracking, modifier = Modifier.offset(70.dp, 46.dp))
                                 val scrollState = rememberScrollState()
@@ -1082,6 +1083,7 @@ class MainActivity : ComponentActivity() {
                         sending = false
                         activeClient = null
                         if (!generationPaused) {
+                            eyeCompletionToken++
                             saveCurrentSession()
                             if (voiceAutoPlay && answer.isNotBlank()) playAnswer(responseIndex)
                         }
