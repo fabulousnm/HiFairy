@@ -32,6 +32,8 @@ Windows 上可双击仓库根目录的 `启动HiFairy语音服务器.cmd`：脚�
 
 同一地址现提供 `/agent` HTTP 接口，供手机连接当前电脑 DSH Host。Agent 使用独立的 `vendor/agent-mobile-token.txt` Bearer 令牌，网关从电脑外部文件读取桥接令牌，仅转发允许的会话操作至 `127.0.0.1:18765`。启动脚本会生成并显示 Agent 令牌和地址。手机首次进入 Agent 页面时填写该令牌；语音播放设置中的地址仍为 `wss://…/stream`，Agent 自动换算为同域 `https://…/agent`。可运行 `python voice-pc/test_agent_gateway.py` 做隔离测试、`python voice-pc/verify_agent_gateway.py` 做本机真实 Host 只读验证。
 
+Agent 实时回复使用同域 WebSocket `wss://…/agent/live/{sessionId}`，首条消息发送 Agent 令牌；服务端从本地 DSH SSE 逐帧转发。Cloudflare Quick Tunnel 不支持 SSE，所以手机不能直接使用 `/agent/sessions/{id}/events` 的 HTTP 事件流。可用 `python voice-pc/verify_agent_websocket.py --base-url <https://.../agent> --long` 测公网首增量与最终消息。
+
 ```powershell
 & '<虚拟环境>\Scripts\python.exe' voice-pc\server.py
 & '<虚拟环境>\Scripts\python.exe' voice-pc\client_benchmark.py ws://127.0.0.1:8765/stream

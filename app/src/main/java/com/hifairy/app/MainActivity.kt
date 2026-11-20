@@ -111,6 +111,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 private data class CodeSnippet(val language: String, val code: String)
+internal const val AGENT_MODE_HOLD_MS = 2000L
 
 private class CodeCardTextView(context: Context) : TextView(context) {
     var codeRanges: List<IntRange> = emptyList()
@@ -176,7 +177,7 @@ internal object ThemeTokens {
     val voiceShade = Color(0xFF080D24)
 }
 
-private object DrawerMotion {
+internal object DrawerMotion {
     const val openThreshold = 0.38f
     const val closeThreshold = 0.62f
     const val flingVelocity = 650f
@@ -197,7 +198,7 @@ private object ThemeDimensions {
     const val userAvatarScale = 1.14f
 }
 
-private fun greetingForHour(hour: Int): String = when (hour) {
+internal fun greetingForHour(hour: Int): String = when (hour) {
     in 5..11 -> "早上好，主人"
     in 12..17 -> "下午好，主人"
     else -> "晚上好，主人"
@@ -387,7 +388,7 @@ private fun ActionGlyph(kind: String, color: Color, modifier: Modifier = Modifie
 }
 
 @Composable
-private fun MessageAction(kind: String, label: String, onClick: () -> Unit, color: Color = ThemeTokens.secondary) {
+internal fun MessageAction(kind: String, label: String, onClick: () -> Unit, color: Color = ThemeTokens.secondary) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val iconScale by animateFloatAsState(if (pressed) .86f else 1f, tween(130), label = "action press")
@@ -415,7 +416,7 @@ private fun ThinkingIndicator() {
 }
 
 @Composable
-private fun FairyOnlineStatus(active: Boolean, modifier: Modifier = Modifier) {
+internal fun FairyOnlineStatus(active: Boolean, modifier: Modifier = Modifier) {
     val transition = rememberInfiniteTransition(label = "Fairy online")
     val glow by transition.animateFloat(.45f, 1f, infiniteRepeatable(tween(1300, easing = EaseInOutSine), RepeatMode.Reverse), label = "online glow")
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -458,7 +459,7 @@ private fun EyeBalanceCard(balance: AccountBalance?, loading: Boolean, now: Inst
 }
 
 @Composable
-private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String, showRegenerate: Boolean, showContinue: Boolean, showEdit: Boolean, playing: Boolean, animateEntrance: Boolean, onCopy: () -> Unit, onEdit: () -> Unit, onRegenerate: () -> Unit, onContinue: () -> Unit, onReplay: () -> Unit) {
+internal fun ChatBubble(message: ChatMessage, displayName: String, avatar: String, showRegenerate: Boolean, showContinue: Boolean, showEdit: Boolean, playing: Boolean, animateEntrance: Boolean, onCopy: () -> Unit, onEdit: () -> Unit, onRegenerate: () -> Unit, onContinue: () -> Unit, onReplay: () -> Unit, showActions: Boolean = true, assistantName: String = "Fairy") {
     val isUser = message.role == "user"
     val context = LocalContext.current
     var reasoningExpanded by remember { mutableStateOf(false) }
@@ -467,7 +468,7 @@ private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String
     Row(Modifier.fillMaxWidth().padding(vertical = 9.dp).graphicsLayer { alpha = entrance.value; translationY = (1f - entrance.value) * 12.dp.toPx() }, horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Top) {
         if (!isUser) ChatAvatar("assistant", avatar, Modifier.size(36.dp))
         Column(Modifier.widthIn(max = 300.dp).padding(horizontal = 8.dp), horizontalAlignment = if (isUser) Alignment.End else Alignment.Start) {
-            Text(if (isUser) displayName else "Fairy", color = ThemeTokens.secondary, fontSize = 11.sp, fontFamily = TypeTokens.terminalFont, modifier = Modifier.padding(bottom = 5.dp))
+            Text(if (isUser) displayName else assistantName, color = ThemeTokens.secondary, fontSize = 11.sp, fontFamily = TypeTokens.terminalFont, modifier = Modifier.padding(bottom = 5.dp))
             if (!isUser && message.reasoning.isNotEmpty()) {
                 val chevronAngle by animateFloatAsState(if (reasoningExpanded) 90f else 0f, tween(220), label = "reasoning chevron")
                 val reasoningRim by animateColorAsState(if (reasoningExpanded) Color(0xFF3C6575) else Color(0xFF294451), tween(220), label = "reasoning rim")
@@ -512,7 +513,7 @@ private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String
                         }.padding(vertical = 4.dp))
                 }
             }
-            if (!isUser && (message.content.isNotBlank() || showContinue)) Row(verticalAlignment = Alignment.CenterVertically) {
+            if (!isUser && showActions && (message.content.isNotBlank() || showContinue)) Row(verticalAlignment = Alignment.CenterVertically) {
                 if (message.content.isNotBlank()) MessageAction("copy", "复制回答", onCopy)
                 if (message.content.isNotBlank()) MessageAction(if (playing) "mute" else "speaker", if (playing) "停止播放" else "重听回答", onReplay, if (playing) ThemeTokens.accent else ThemeTokens.secondary)
                 if (showRegenerate) MessageAction("retry", "重新生成回答", onRegenerate)
@@ -557,7 +558,7 @@ private fun ThemeButton(onClick: () -> Unit, content: @Composable RowScope.() ->
 }
 
 @Composable
-private fun HistorySessionSurface(selected: Boolean, content: @Composable ColumnScope.() -> Unit) {
+internal fun HistorySessionSurface(selected: Boolean, content: @Composable ColumnScope.() -> Unit) {
     val shape = RoundedCornerShape(14.dp)
     val fill = if (selected) ThemeTokens.pressedCard else ThemeTokens.raisedCard
     val rim = if (selected) ThemeTokens.pressedCardRim else ThemeTokens.raisedCardRim
@@ -928,7 +929,7 @@ class MainActivity : ComponentActivity() {
                                     if (eyeInteractive) detectTapGestures(
                                         onPress = {
                                             if (!hasConversation) {
-                                                val released = withTimeoutOrNull(5000L) { tryAwaitRelease() }
+                                                val released = withTimeoutOrNull(AGENT_MODE_HOLD_MS) { tryAwaitRelease() }
                                                 if (released == null) {
                                                     eyeHoldTriggered = true
                                                     eyeCardOpen = false

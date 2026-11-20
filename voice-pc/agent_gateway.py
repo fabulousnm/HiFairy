@@ -1,10 +1,11 @@
 """Authenticated Agent routes on the existing Fairy voice origin."""
 
 import hmac
+import asyncio
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request, WebSocket
 from fastapi.responses import Response, StreamingResponse
 
 router = APIRouter(prefix="/agent")
@@ -35,6 +36,38 @@ def _bridge_path(path: str) -> str:
         if suffix and all(c.islower() or c.isdigit() or c == "-" for c in suffix):
             return "/" + path
     raise HTTPException(404, "not_found")
+
+
+@router.websocket("/live/{session_id}")
+async def agent_live(ws: WebSocket, session_id: str):
+    await ws.accept()
+    try:
+        target = _bridge_path(f"sessions/{session_id}/events")
+        hello = await asyncio.wait_for(ws.receive_json(), timeout=10)
+        bridge_token = _tokens(f"Bearer {hello.get('token', '')}")
+    except (HTTPException, asyncio.TimeoutError, ValueError, AttributeError):
+        await ws.close(code=1008)
+        return
+    try:
+        async with httpx.AsyncClient(timeout=None, trust_env=False) as client:
+            async with client.stream("GET", BRIDGE_URL + target,
+                                     headers={"Authorization": f"Bearer {bridge_token}"}) as upstream:
+                if upstream.status_code != 200:
+                    await ws.send_json({"type": "error", "error": "bridge_unavailable"})
+                    return
+                async for line in upstream.aiter_lines():
+                    if line.startswith("data: "):
+                        await ws.send_text(line[6:])
+    except (httpx.HTTPError, RuntimeError):
+        try:
+            await ws.send_json({"type": "error", "error": "bridge_unavailable"})
+        except RuntimeError:
+            pass
+    finally:
+        try:
+            await ws.close()
+        except RuntimeError:
+            pass
 
 
 @router.api_route("/{path:path}", methods=["GET", "POST"])

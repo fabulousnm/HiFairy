@@ -6,7 +6,7 @@
 | --- | --- |
 | 0. 同会话接口 PoC | 固定 DSH 版本，确认电脑 Host 的会话列表、默认工作区、事件流与创建/继续接口；手机/桥接创建的会话必须能在电脑 DSH 界面继续。 |
 | 1. 电脑 Agent 网关 | 单一对外网址按路径承载语音与 Agent；独立认证；桥接 Host 会话、事件、取消和批准；工作区由电脑配置。用隔离测试目录验证。 |
-| 2. 手机 Agent 基础界面 | 新对话眼徽长按 5 秒切换 Chat/Agent；先实现明确的模式状态、会话列表、消息与工具事件、断线重连，再细化中心扩散动画。 |
+| 2. 手机 Agent 基础界面 | 新对话眼徽长按 2 秒切换 Chat/Agent；复用 Chat 气泡、头像、输入和历史抽屉，接入逐段回复及断线重连；工具事件待后续补齐。 |
 | 3. DSH 控件与互通 | 手机显示电脑 DSH 的模式、模型和权限，处理批准请求；双端同会话读写、停止、恢复及附件引用。Fairy 自定义模式与人格/知识库留到后续独立阶段。 |
 | 4. 异网与体验验收 | 共用公网入口，测连接、首事件、完整任务和断线恢复；接入现有语音，完善眼徽与主题转场动效。 |
 
@@ -20,4 +20,12 @@
 
 电脑端验证（2026-11-20）：使用本机安装的 DSH `0.2.0-rc.2` Session Controller 类型定义，桥接新增受令牌保护的 `POST /sessions`、`POST /sessions/:id/messages`、`GET /sessions/:id/snapshot` 和 `GET /sessions/:id/events`。最初只传测试子目录 `cwd` 创建的会话虽能回答，但未出现在桌面工作区列表；同时传 `cwd` 与 `workspaceId` 被 Host 明确拒绝。最终改为仅传电脑默认 `workspaceId`，新会话收到回答，且同时出现在 Host 列表和桌面工作区记录。持续事件流测试在连接保持期间发送第二条消息，实时收到 `assistant/message` 和 `turn/end`，脚本 `verify-live.mjs` 输出三项均为 true。单元测试 3 项通过。**已验证电脑端同 Host 创建、发送及实时事件闭环**；此 PoC 桥接使用本机回环端口和独立令牌，不直接对公网开放。
 
-2026-11-20 阶段 1/2 最小接入：语音 FastAPI 新增同源 `/agent` 受限网关，路由仅允许会话列表、创建、快照、消息和 SSE；手机令牌保存在被 Git 忽略的 `voice-pc/vendor/agent-mobile-token.txt`，桥接令牌继续保存在 `D:\dsh-data\hifairy-agent-probe.token`，网关只转发到电脑回环端口。独立测试验证 401、路径白名单及上游令牌替换；真实 Host 验证授权后返回 39 条会话和测试会话快照。本机 FastAPI 入口又完成创建、发送、收到回答、SSE 开流的闭环，公网 Quick Tunnel 上授权会话列表返回 40 条。Android 新增 Agent 界面：新对话眼徽长按 5 秒进入，Agent 眼徽长按 5 秒返回；读取电脑会话、创建绑定桌面工作区的新会话、发送文本并监听 SSE，断线后重连和刷新快照。地址沿用设置中语音 WebSocket 地址的同一域，Agent 令牌在首次进入时单独输入并加密保存。`app:assembleDebug` 通过。当前消息界面使用 Host 的 `turnOutline` 显示已完成回合，工具事件与逐字流式渲染、权限批准、停止任务、模式选择和转场动画仍留待后续阶段；因此尚不把手机端完整 Agent 验收标记为完成。
+2026-11-20 阶段 1/2 最小接入：语音 FastAPI 新增同源 `/agent` 受限网关，路由仅允许会话列表、创建、快照、消息和 SSE；手机令牌保存在被 Git 忽略的 `voice-pc/vendor/agent-mobile-token.txt`，桥接令牌继续保存在 `D:\dsh-data\hifairy-agent-probe.token`，网关只转发到电脑回环端口。独立测试验证 401、路径白名单及上游令牌替换；真实 Host 验证授权后返回 39 条会话和测试会话快照。本机 FastAPI 入口又完成创建、发送、收到回答、SSE 开流的闭环，公网 Quick Tunnel 上授权会话列表返回 40 条。Android 新增 Agent 界面：新对话眼徽长按 2 秒进入，Agent 眼徽长按 2 秒返回；读取电脑会话、创建绑定桌面工作区的新会话、发送文本并监听实时通道，断线后重连和刷新快照。地址沿用设置中语音 WebSocket 地址的同一域，Agent 令牌在首次进入时单独输入并加密保存。`app:assembleDebug` 通过。当前消息界面使用 Host 的 `turnOutline` 显示已完成回合，工具事件、权限批准、停止任务、模式选择和转场动画仍留待后续阶段；因此尚不把手机端完整 Agent 验收标记为完成。
+
+2026-11-20 用户复测后修正：切换长按缩短为 2 秒。实测 DSH `/events` 在最终 `assistant/message` 之前发送多条 `assistant-stream`，其中 `frame.chunk.type=text-delta`；旧手机页只监听最终消息并从 `turnOutline` 取已完成回合，所以等待整条回答结束是客户端解析逻辑导致，并非已经证明网络传输更慢。本机经同域 FastAPI `/agent` 测试：首个文字增量约 2009 ms、最终消息约 2480 ms，共 65 个增量，首增量早于最终消息。Android 现直接累计 `text-delta` 并即时更新回答气泡，最终事件后切换为快照内容。Agent 页复用 Chat 的 `ChatBubble`、`MessageAction`、`HistorySessionSurface`、眼徽状态及录音输入；抽屉同样为 3/4 宽、点击右侧收起并按相同阈值回弹。新任务不预先创建空 DSH 会话，首次发送时创建并等待实时通道已订阅后再投递。真机逐字显示及手势仍需验收。
+
+后续待完成：Agent 专属主题色、中心扩散切换动画和眼徽变换动效；电脑 Host 的模式选择、权限选择和审批；任务停止、工具事件细节、Agent 历史会话的重命名/删除能力；长会话与断线中的增量续传。普通 Chat 的“接入绳网”不放进 Agent 页。
+
+公网流式复核：本机 SSE 可逐段返回，但沿用的 Cloudflare Quick Tunnel 对 SSE 连接超时；[Cloudflare 官方 Quick Tunnel 限制](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/)明确说明不支持 SSE。因此 Agent 实时通道改用同一域名的 `wss://…/agent/live/{sessionId}`，首条 WebSocket 消息发送独立 Agent 令牌，电脑 FastAPI 在本机读取 DSH SSE 并逐帧转发到 WebSocket；会话列表、创建和发消息仍走 HTTPS。语音 `/stream` 不受影响。本机及公网首增量已在下一段复核；真机显示仍待验收。
+
+WebSocket 复测通过：本机短回答首增量约 1166 ms、最终约 1478 ms；公网较长回答首增量约 3236 ms、增量持续 2164 ms、最终约 5432 ms，共 319 个增量。错误令牌在握手后以 WebSocket 1008 拒绝。说明公网传输可在回答完成前持续送达；手机端实际绘制与网络切换行为仍需真机验收。测试命令为 `python voice-pc/verify_agent_websocket.py --base-url <https://.../agent> --long`，不会打印令牌或回答正文。
