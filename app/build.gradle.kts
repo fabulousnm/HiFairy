@@ -34,6 +34,10 @@ dependencies {
     implementation("io.noties.markwon:ext-tables:4.6.2")
     implementation("io.noties.markwon:ext-strikethrough:4.6.2")
     implementation("io.noties.markwon:ext-tasklist:4.6.2")
+    implementation("io.noties.markwon:syntax-highlight:4.6.2") {
+        exclude(group = "org.jetbrains", module = "annotations-java5")
+    }
+    annotationProcessor("io.noties:prism4j-bundler:2.0.0")
     implementation("com.squareup.okhttp3:okhttp:5.3.0")
     implementation(files("../voice-lab/vendor/sherpa-static.aar"))
 }

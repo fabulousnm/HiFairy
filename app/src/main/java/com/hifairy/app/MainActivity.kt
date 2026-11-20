@@ -5,6 +5,9 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.widget.VideoView
 import android.widget.TextView
+import android.widget.FrameLayout
+import android.widget.ImageButton
+import android.view.Gravity
 import android.widget.Toast
 import android.graphics.BitmapFactory
 import android.content.ClipData
@@ -80,6 +83,8 @@ import io.noties.markwon.inlineparser.MarkwonInlineParserPlugin
 import io.noties.markwon.ext.tables.TablePlugin
 import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
 import io.noties.markwon.ext.tasklist.TaskListPlugin
+import io.noties.markwon.syntax.Prism4jThemeDarkula
+import io.noties.markwon.syntax.SyntaxHighlightPlugin
 import org.commonmark.node.FencedCodeBlock
 import org.commonmark.node.Node
 import org.commonmark.parser.Parser
@@ -150,7 +155,7 @@ private fun normalizeMath(markdown: String): String = markdown
     .replace("\\(", "$$").replace("\\)", "$$")
 
 @Composable
-private fun MarkdownMessage(message: String, modifier: Modifier = Modifier) {
+private fun MarkdownMessage(message: String, modifier: Modifier = Modifier, copyCode: Boolean = false) {
     val context = LocalContext.current
     val markwon = remember(context) {
         Markwon.builder(context)
@@ -159,6 +164,7 @@ private fun MarkdownMessage(message: String, modifier: Modifier = Modifier) {
             .usePlugin(TablePlugin.create(context))
             .usePlugin(StrikethroughPlugin.create())
             .usePlugin(TaskListPlugin.create(context))
+            .usePlugin(SyntaxHighlightPlugin.create(CodeGrammarBundle.create(), Prism4jThemeDarkula.create()))
             .usePlugin(object : AbstractMarkwonPlugin() {
                 override fun configureTheme(builder: MarkwonTheme.Builder) {
                     builder.codeBlockBackgroundColor(ThemeTokens.codeBackground)
@@ -168,11 +174,48 @@ private fun MarkdownMessage(message: String, modifier: Modifier = Modifier) {
             })
             .build()
     }
-    AndroidView(
-        factory = { TextView(it).apply { setTextColor(android.graphics.Color.rgb(232, 243, 255)); textSize = 16f; setLineSpacing(4f, 1f); setTextIsSelectable(true); setLinkTextColor(android.graphics.Color.rgb(143, 180, 255)) } },
-        update = { markwon.setMarkdown(it, normalizeMath(message)) },
-        modifier = modifier
-    )
+    AndroidView(factory = { androidContext ->
+        FrameLayout(androidContext).apply {
+            addView(TextView(androidContext).apply {
+                setTextColor(android.graphics.Color.rgb(232, 243, 255)); textSize = 16f
+                setLineSpacing(4f, 1f); setTextIsSelectable(true)
+                setLinkTextColor(android.graphics.Color.rgb(143, 180, 255))
+            }, FrameLayout.LayoutParams(-1, -2))
+        }
+    }, update = { container ->
+        val textView = container.getChildAt(0) as TextView
+        container.tag = message
+        markwon.setMarkdown(textView, normalizeMath(message))
+        container.post {
+            if (container.tag != message) return@post
+            if (container.childCount > 1) container.removeViews(1, container.childCount - 1)
+            if (!copyCode) return@post
+            val layout = textView.layout ?: return@post
+            val rendered = textView.text.toString()
+            var searchFrom = 0
+            codeSnippets(message).forEachIndexed { index, snippet ->
+                val code = snippet.code.trimEnd('\n', '\r')
+                if (code.isEmpty()) return@forEachIndexed
+                val start = rendered.indexOf(code, searchFrom)
+                if (start < 0) return@forEachIndexed
+                searchFrom = start + code.length
+                val buttonSize = (32 * container.resources.displayMetrics.density).toInt()
+                val button = ImageButton(container.context).apply {
+                    setImageResource(R.drawable.ic_copy_code)
+                    setColorFilter(android.graphics.Color.rgb(143, 180, 255))
+                    setBackgroundColor(ThemeTokens.codeBackground)
+                    contentDescription = "复制第 ${index + 1} 段代码"
+                    setOnClickListener {
+                        (container.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+                            .setPrimaryClip(ClipData.newPlainText("Fairy 代码", snippet.code))
+                    }
+                }
+                container.addView(button, FrameLayout.LayoutParams(buttonSize, buttonSize, Gravity.TOP or Gravity.END).apply {
+                    topMargin = textView.top + layout.getLineTop(layout.getLineForOffset(start))
+                })
+            }
+        }
+    }, modifier = modifier)
 }
 
 @Composable
@@ -251,7 +294,6 @@ private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String
     val isUser = message.role == "user"
     val context = LocalContext.current
     var reasoningExpanded by remember { mutableStateOf(false) }
-    val snippets = remember(message.content) { if (isUser) emptyList() else codeSnippets(message.content) }
     Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Top) {
         if (!isUser) ChatAvatar("assistant", avatar, Modifier.size(36.dp))
         Column(Modifier.widthIn(max = 300.dp).padding(horizontal = 8.dp), horizontalAlignment = if (isUser) Alignment.End else Alignment.Start) {
@@ -265,16 +307,8 @@ private fun ChatBubble(message: ChatMessage, displayName: String, avatar: String
             }
             if (message.content.isNotBlank() || message.reasoning.isBlank()) {
                 Box(Modifier.background(if (isUser) ThemeTokens.userBubble else ThemeTokens.fairyBubble, RoundedCornerShape(16.dp)).padding(horizontal = 14.dp, vertical = 11.dp)) {
-                    MarkdownMessage(message.content.ifBlank { "正在思考…" }, Modifier.fillMaxWidth())
+                    MarkdownMessage(message.content.ifBlank { "正在思考…" }, Modifier.fillMaxWidth(), copyCode = !isUser)
                 }
-            }
-            if (!isUser) snippets.forEachIndexed { index, snippet ->
-                Text("▣ 复制代码 ${index + 1}${snippet.language.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()}",
-                    color = ThemeTokens.accent, fontSize = 11.sp,
-                    modifier = Modifier.clickable(onClickLabel = "复制第 ${index + 1} 段代码") {
-                        (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
-                            .setPrimaryClip(ClipData.newPlainText("Fairy 代码", snippet.code))
-                    }.padding(horizontal = 12.dp, vertical = 7.dp))
             }
             if (isUser && message.attachments.isNotEmpty()) {
                 message.attachments.forEach { attachment ->
