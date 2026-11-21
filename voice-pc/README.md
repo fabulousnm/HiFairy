@@ -36,7 +36,7 @@ Agent 实时回复使用同域 WebSocket `wss://…/agent/live/{sessionId}`，�
 
 Agent 历史目录 `GET /agent/sessions` 只返回会话元数据；打开某条会话时 `GET /agent/sessions/{id}/recent` 返回最近 15 轮真实用户提问、对应完整回答及折叠记录，内部通知和工具调用不占轮数。展开思考、工具、终端转录或工作说明后再访问 `GET /agent/sessions/{id}/details/{reasoning|tool|terminal|commentary}/{key}`。实时 WebSocket 不转发整份快照，避免重复传输。电脑 DSH 重新启动后才会加载桥接插件文件的改动。
 
-新任务页从电脑 DSH 的 `agentPresets.list()` 和 `workspaceRegistry.list()` 实时读取模式及已登记工作区：`GET /agent/modes`、`GET /agent/workspaces`。手机停留在新任务页时每 8 秒刷新；模式或工作区在电脑端删除后会从选择器消失。创建会话时 `POST /agent/sessions` 传 `agentPreset` 和 `workspaceId`，Host 再以当前列表校验，避免使用过期选择；未传参数的旧客户端沿用 Host 默认模式和配置工作区。此选择只作用于新会话，不改变电脑 DSH 的全局默认设置。
+新任务页从电脑 DSH 的 `agentPresets.list()` 和 `workspaceRegistry.list()` 读取模式及已登记工作区：`GET /agent/modes`、`GET /agent/workspaces`。应用启动后首次进入新任务页、以及每次点击新任务进入该页时各读取一次，不在页面内定时轮询。电脑端的增删会在下一次进入新任务页时反映出来。创建会话时 `POST /agent/sessions` 传 `agentPreset` 和 `workspaceId`，Host 再以当前列表校验，避免使用过期选择；未传参数的旧客户端沿用 Host 默认模式和配置工作区。此选择只作用于新会话，不改变电脑 DSH 的全局默认设置。
 
 手机发送消息使用 HTTPS POST，电脑 DSH 的当前会话事件通过本地 SSE → 同域 WebSocket 推送给手机。手机仅对当前打开的会话建立实时订阅；抽屉中的其他会话仅保留轻量元数据，点开后再拉最近 15 轮与按需详情。WebSocket 首帧仅用于令牌认证和后续服务端推送，业务发送并不走双向 WebSocket。历史列表在打开、当前任务结束及实时连接重试时刷新。
 

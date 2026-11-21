@@ -334,6 +334,7 @@ class AgentActivity : ComponentActivity() {
             var chosenMode by remember { mutableStateOf("") }
             var chosenWorkspace by remember { mutableStateOf("") }
             var choicesLoading by remember { mutableStateOf(false) }
+            var choicesRefreshVersion by remember { mutableIntStateOf(0) }
             val drawerWidthPx = with(LocalDensity.current) { LocalConfiguration.current.screenWidthDp.dp.toPx() * .75f }
             val drawerProgress = remember { Animatable(0f) }
             var dragProgress by remember { mutableFloatStateOf(0f) }
@@ -369,6 +370,7 @@ class AgentActivity : ComponentActivity() {
                 liveReasoning = ""
                 streamConnected = false
                 listOpen = false
+                choicesRefreshVersion++
             }
 
             suspend fun refreshList() {
@@ -448,9 +450,9 @@ class AgentActivity : ComponentActivity() {
             }
 
             LaunchedEffect(tokenReady) { if (tokenReady) refreshList() }
-            LaunchedEffect(tokenReady, selected) {
+            LaunchedEffect(tokenReady, selected, choicesRefreshVersion) {
                 if (!tokenReady || selected.isNotBlank()) return@LaunchedEffect
-                while (true) { refreshChoices(); delay(8000) }
+                refreshChoices()
             }
             LaunchedEffect(selected, tokenReady) { if (tokenReady && selected.isNotBlank()) refreshSelected() }
             LaunchedEffect(selected, tokenReady) {
