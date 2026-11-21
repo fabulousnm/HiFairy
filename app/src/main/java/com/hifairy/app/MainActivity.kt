@@ -598,10 +598,10 @@ class MainActivity : ComponentActivity() {
     private var playingRequestId = 0L
     private lateinit var speechPlayer: FairySpeechPlayer
     private var voiceEndpointDraft by mutableStateOf("")
-    private var voiceTokenDraft by mutableStateOf("")
     private lateinit var voiceInput: ParaformerVoiceInput
     private var page by mutableStateOf("chat")
     private var settingsFromHistory = false
+    private var settingsOnly = false
     private var chatOpenedFromHistory = false
     private var historyOpen by mutableStateOf(false)
     private var introPhase by mutableStateOf("boot")
@@ -645,7 +645,6 @@ class MainActivity : ComponentActivity() {
         }
     }
     private lateinit var secureSettings: SecureSettings
-    private var keyDraft by mutableStateOf("")
     private var modelDraft by mutableStateOf("deepseek-flash")
     private var effortDraft by mutableStateOf("high")
     private val availableModels = mutableStateListOf<DeepSeekModel>()
@@ -699,6 +698,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         secureSettings = SecureSettings(this)
+        settingsOnly = intent.getBooleanExtra("open_settings_only", false)
+        if (settingsOnly) { page = "settings"; introPhase = "ready" }
         chatStore = ChatStore(this)
         sessions.addAll(chatStore.load())
         modelDraft = secureSettings.model
@@ -1104,11 +1105,10 @@ class MainActivity : ComponentActivity() {
                                 }
                                 if (avatarChoice == "custom") ChatAvatar("user", "custom", Modifier.size(52.dp))
                             }
-                            SettingsCard("DEEPSEEK // CONNECTION", "连接配置") {
-                                Text("API KEY", color = ThemeTokens.secondary, fontSize = 11.sp, fontFamily = TypeTokens.terminalFont)
-                                TextField(value = keyDraft, onValueChange = { keyDraft = it }, visualTransformation = PasswordVisualTransformation(), placeholder = { Text(if (secureSettings.apiKey().isEmpty()) "输入 API Key" else "已保存 · 输入新 Key 可替换", color = ThemeTokens.secondary) }, modifier = Modifier.fillMaxWidth(), colors = darkFieldColors())
-                                Text("密钥仅保存在本机的加密存储中", color = ThemeTokens.secondary, fontSize = 12.sp)
-                                ThemeButton(onClick = { if (keyDraft.isNotBlank()) { secureSettings.saveApiKey(keyDraft.trim()); keyDraft = ""; status = "API Key 已加密保存"; modelsRefresh++ } }) { Text("保存密钥") }
+                            SettingsCard("PRIVACY // SECURITY", "隐私安全") {
+                                Text("管理 DeepSeek、语音服务和电脑 Agent 的访问凭据", color = ThemeTokens.secondary, fontSize = 12.sp)
+                                Text("进入隐私安全  ›", color = ThemeTokens.accent, modifier = Modifier.fillMaxWidth()
+                                    .clickable { startActivity(Intent(this@MainActivity, PrivacySettingsActivity::class.java)) }.padding(vertical = 8.dp))
                             }
                             SettingsCard("MODEL // RESPONSE", "回答偏好") {
                                 Text("模型", color = ThemeTokens.secondary, fontSize = 12.sp)
@@ -1143,15 +1143,12 @@ class MainActivity : ComponentActivity() {
                             SettingsCard("FAIRY // VOICE", "语音播放") {
                                 Text("电脑端语音服务地址（wss://…/stream）", color = ThemeTokens.secondary, fontSize = 12.sp)
                                 TextField(value = voiceEndpointDraft, onValueChange = { voiceEndpointDraft = it }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = darkFieldColors())
-                                Text("语音服务令牌", color = ThemeTokens.secondary, fontSize = 12.sp)
-                                TextField(value = voiceTokenDraft, onValueChange = { voiceTokenDraft = it }, visualTransformation = PasswordVisualTransformation(), placeholder = { Text(if (secureSettings.voiceToken().isBlank()) "输入令牌" else "已保存 · 留空保持原令牌", color = ThemeTokens.secondary) }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = darkFieldColors())
                                 ThemeButton(onClick = {
                                     val endpoint = voiceEndpointDraft.trim()
                                     if (!endpoint.startsWith("wss://") || !endpoint.endsWith("/stream")) {
                                         Toast.makeText(this@MainActivity, "地址应为 wss://…/stream", Toast.LENGTH_SHORT).show()
                                     } else {
                                         secureSettings.voiceEndpoint = endpoint
-                                        if (voiceTokenDraft.isNotBlank()) { secureSettings.saveVoiceToken(voiceTokenDraft.trim()); voiceTokenDraft = "" }
                                         stopSpeech()
                                         Toast.makeText(this@MainActivity, "语音配置已保存", Toast.LENGTH_SHORT).show()
                                     }
@@ -1236,9 +1233,11 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         greetingHour = LocalTime.now().hour
+        if (::secureSettings.isInitialized && page == "settings") modelsRefresh++
     }
 
     private fun leaveSettings() {
+        if (settingsOnly) { finish(); return }
         page = "chat"
         historyOpen = settingsFromHistory
         settingsFromHistory = false

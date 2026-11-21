@@ -270,8 +270,10 @@ class AgentActivity : ComponentActivity() {
         val api = AgentConnection(settings)
         setContent {
             val scope = rememberCoroutineScope()
-            var tokenDraft by remember { mutableStateOf("") }
             var tokenReady by remember { mutableStateOf(settings.agentToken().isNotBlank()) }
+            val privacyLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+                tokenReady = settings.agentToken().isNotBlank()
+            }
             var sessions by remember { mutableStateOf(emptyList<AgentSession>()) }
             var selected by remember { mutableStateOf("") }
             var items by remember { mutableStateOf(emptyList<AgentItem>()) }
@@ -476,21 +478,21 @@ class AgentActivity : ComponentActivity() {
                         }, ThemeTokens.accent)
                     }
                 }
-                Box(Modifier.fillMaxWidth().weight(1f)) {
+                BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+                    val hasConversation = selected.isNotBlank()
+                    val eyeSize by androidx.compose.animation.core.animateDpAsState(if (hasConversation) 54.dp else 150.dp, tween(550), label = "agent eye size")
+                    val eyeX by androidx.compose.animation.core.animateDpAsState(if (hasConversation) 0.dp else (maxWidth - eyeSize) / 2, tween(550), label = "agent eye x")
+                    val eyeY by androidx.compose.animation.core.animateDpAsState(if (hasConversation) 28.dp else (maxHeight - eyeSize) / 2, tween(550), label = "agent eye y")
+                    if (tokenReady) AgentHoldEye(eyeSize, Modifier.offset(eyeX, eyeY), pendingPrompt.isNotBlank()) { finish() }
                     if (!tokenReady) {
                         Column(Modifier.align(Alignment.Center)) {
-                            Text("输入电脑启动脚本显示的 Agent 令牌", color = ThemeTokens.text)
-                            TextField(tokenDraft, { tokenDraft = it }, modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation())
-                            Button(onClick = { if (tokenDraft.isNotBlank()) { settings.saveAgentToken(tokenDraft.trim()); tokenDraft = ""; tokenReady = true } }) { Text("连接电脑 Agent") }
+                            Text("请在隐私安全中设置电脑 Agent 访问令牌", color = ThemeTokens.text)
+                            Button(onClick = { privacyLauncher.launch(android.content.Intent(this@AgentActivity, MainActivity::class.java).putExtra("open_settings_only", true)) }) { Text("打开设置") }
                         }
                     } else if (selected.isBlank()) {
-                        Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                            AgentHoldEye(150.dp, onSwitch = { finish() })
-                            Text(greetingForHour(LocalTime.now().hour), color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(top = 35.dp))
-                        }
+                        Text(greetingForHour(LocalTime.now().hour), color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.align(Alignment.Center).offset(y = eyeSize / 2 + 42.dp))
                     } else {
-                        AgentHoldEye(54.dp, Modifier.align(Alignment.TopStart).offset(y = 28.dp), pendingPrompt.isNotBlank()) { finish() }
                         FairyOnlineStatus(pendingPrompt.isNotBlank(), Modifier.align(Alignment.TopStart).offset(x = 70.dp, y = 46.dp))
                         val scroll = rememberScrollState()
                         LaunchedEffect(selected, loadedSession) {
@@ -611,8 +613,9 @@ class AgentActivity : ComponentActivity() {
                             }
                         }
                     }
-                    Text("连接设置  ›", color = ThemeTokens.text, modifier = Modifier.fillMaxWidth().clickable {
-                        listOpen = false; tokenReady = false
+                    Text("设置  ›", color = ThemeTokens.text, modifier = Modifier.fillMaxWidth().clickable {
+                        listOpen = false
+                        privacyLauncher.launch(android.content.Intent(this@AgentActivity, MainActivity::class.java).putExtra("open_settings_only", true))
                     }.padding(vertical = 16.dp))
                 }
             }
