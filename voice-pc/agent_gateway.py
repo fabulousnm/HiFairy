@@ -28,8 +28,8 @@ def _tokens(authorization: str | None) -> str:
 
 def _bridge_path(path: str) -> str:
     # Never allow callers to choose another local address or arbitrary path.
-    if path == "sessions":
-        return "/sessions"
+    if path in {"sessions", "modes", "workspaces"}:
+        return "/" + path
     parts = path.split("/")
     valid_session = len(parts) >= 3 and parts[0] == "sessions" and parts[1].startswith("session-")
     valid_suffix = len(parts) == 3 and parts[2] in {"messages", "snapshot", "events", "recent"}

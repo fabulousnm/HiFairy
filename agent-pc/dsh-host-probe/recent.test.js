@@ -45,6 +45,27 @@ test('folds a real pasted terminal transcript without displaying it as a user bu
   assert.equal(findDetail({ records }, 'terminal', '1').text, transcript)
 })
 
+test('treats command-shaped tool arguments as terminal text regardless of tool name', () => {
+  const records = [{ type: 'event', event: { type: 'tool/call', data: {
+    callId: 'cmd-1', name: 'ops_execute', arguments: { command: 'cat file.tex' }
+  } } }, { type: 'event', event: { type: 'tool/result', data: {
+    message: { toolCallId: 'cmd-1', content: [{ type: 'text', text: '\\newcommand{\\TBD}{x}' }] }
+  } } }]
+  const detail = findDetail({ records }, 'tool', 'cmd-1')
+  assert.equal(detail.terminal, true)
+  assert.equal(detail.input, 'cat file.tex')
+  assert.equal(detail.result, '\\newcommand{\\TBD}{x}')
+})
+
+test('keeps raw LaTeX tool output out of Markdown rendering', () => {
+  const records = [{ type: 'event', event: { type: 'tool/call', data: {
+    callId: 'latex-1', name: 'document_reader', arguments: { path: 'paper.tex' }
+  } } }, { type: 'event', event: { type: 'tool/result', data: {
+    message: { toolCallId: 'latex-1', content: [{ type: 'text', text: 'line 12 \\newcommand{\\TBD}{x}' }] }
+  } } }]
+  assert.equal(findDetail({ records }, 'tool', 'latex-1').terminal, true)
+})
+
 test('keeps work narration with tool calls out of answer bubbles', () => {
   const records = [
     { type: 'event', event: { seq: 1, type: 'user/message', data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '检查项目' }] } } },

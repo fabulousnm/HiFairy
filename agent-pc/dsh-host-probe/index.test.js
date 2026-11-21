@@ -51,19 +51,37 @@ test('creates in the configured workspace and queues a message in that Host sess
     async prompt(request) { calls.push(['prompt', request]); return { accepted: true } }
   }
   const token = 'c'.repeat(40)
-  const server = createProbeServer(controller, token, { workspaceId: 'workspace-1' })
+  const workspaceItems = [{ id: 'workspace-1', title: 'Project', path: 'D:\\Project' }]
+  const presetItems = [{ id: 'standard', name: 'Standard' }, { id: 'review', name: 'Review' }]
+  const workspaceRegistry = { list: () => workspaceItems }
+  const agentPresets = { defaultId: 'standard', list: async () => presetItems }
+  const server = createProbeServer(controller, token, { workspaceId: 'workspace-1', workspaceRegistry, agentPresets })
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   try {
     const base = `http://127.0.0.1:${server.address().port}`
     const headers = { Authorization: `Bearer ${token}` }
+    const workspaces = await (await fetch(`${base}/workspaces`, { headers })).json()
+    const modes = await (await fetch(`${base}/modes`, { headers })).json()
+    assert.equal(workspaces.items[0].id, 'workspace-1')
+    assert.equal(modes.items[1].id, 'review')
+    presetItems.push({ id: 'new-mode', name: 'New Mode' })
+    assert.equal((await (await fetch(`${base}/modes`, { headers })).json()).items[2].id, 'new-mode')
     const created = await fetch(`${base}/sessions`, { method: 'POST', headers })
     assert.equal(created.status, 201)
     assert.equal(calls[0][1].cwd, undefined)
     assert.equal(calls[0][1].workspaceId, 'workspace-1')
+    assert.equal(calls[0][1].agentPreset, 'standard')
+    const custom = await fetch(`${base}/sessions`, { method: 'POST', headers, body: JSON.stringify({ workspaceId: 'workspace-1', agentPreset: 'review' }) })
+    assert.equal(custom.status, 201)
+    assert.equal(calls[1][1].agentPreset, 'review')
+    presetItems.pop()
+    assert.equal((await (await fetch(`${base}/modes`, { headers })).json()).items.length, 2)
+    const removed = await fetch(`${base}/sessions`, { method: 'POST', headers, body: JSON.stringify({ workspaceId: 'workspace-1', agentPreset: 'removed' }) })
+    assert.equal(removed.status, 400)
     const sent = await fetch(`${base}/sessions/session-test/messages`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ text: '联通测试' }) })
     assert.equal(sent.status, 202)
-    assert.equal(calls[1][1].content[0].text, '联通测试')
-    assert.equal(calls[1][1].mode, 'queue')
+    assert.equal(calls[2][1].content[0].text, '联通测试')
+    assert.equal(calls[2][1].mode, 'queue')
   } finally {
     await new Promise(resolve => server.close(resolve))
   }

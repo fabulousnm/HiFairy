@@ -40,6 +40,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -75,6 +77,33 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 private data class AgentSession(val id: String, val title: String)
 private data class AgentItem(val id: String, val kind: String, val text: String, val title: String, val detailKey: String, val parentId: String, val hasResult: Boolean)
 private data class AgentDetail(val text: String = "", val input: String = "", val output: String = "", val terminal: Boolean = false)
+private data class AgentChoice(val id: String, val title: String, val isDefault: Boolean = false)
+
+@Composable
+private fun AgentChoiceMenu(label: String, choices: List<AgentChoice>, selectedId: String,
+                            loading: Boolean, onSelect: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val selected = choices.firstOrNull { it.id == selectedId }
+    Box {
+        Row(Modifier.widthIn(min = 220.dp, max = 300.dp)
+            .background(ThemeTokens.surface, RoundedCornerShape(14.dp))
+            .border(1.dp, ThemeTokens.accent.copy(alpha = .32f), RoundedCornerShape(14.dp))
+            .clickable(enabled = choices.isNotEmpty()) { expanded = true }
+            .padding(horizontal = 14.dp, vertical = 11.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("$label  ·  ${selected?.title ?: if (loading) "正在同步…" else "暂无可用选项"}",
+                color = ThemeTokens.text, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f))
+            Text("⌄", color = ThemeTokens.accent, fontSize = 13.sp)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false },
+            containerColor = ThemeTokens.surface) {
+            choices.forEach { choice ->
+                DropdownMenuItem(text = { Text(choice.title, color = ThemeTokens.text, fontSize = 13.sp) },
+                    onClick = { onSelect(choice.id); expanded = false })
+            }
+        }
+    }
+}
 
 @Composable
 private fun AgentTerminalSection(label: String, content: String, onCopy: () -> Unit) {
@@ -210,7 +239,20 @@ private class AgentConnection(private val settings: SecureSettings) {
         }
     }
 
-    fun create(): String = request("/sessions", "POST", "{}").getString("sessionId")
+    fun modes(): List<AgentChoice> {
+        val items = request("/modes").getJSONArray("items")
+        return (0 until items.length()).map { items.getJSONObject(it) }.filter { it.optBoolean("available", true) }.map {
+            AgentChoice(it.getString("id"), it.optString("title").ifBlank { it.getString("id") }, it.optBoolean("isDefault"))
+        }
+    }
+    fun workspaces(): List<AgentChoice> {
+        val items = request("/workspaces").getJSONArray("items")
+        return (0 until items.length()).map { items.getJSONObject(it) }.map {
+            AgentChoice(it.getString("id"), it.optString("title").ifBlank { it.optString("path") })
+        }
+    }
+    fun create(workspaceId: String, agentPreset: String): String = request("/sessions", "POST",
+        JSONObject().put("workspaceId", workspaceId).put("agentPreset", agentPreset).toString()).getString("sessionId")
     fun send(id: String, text: String) { request("/sessions/$id/messages", "POST", JSONObject().put("text", text).toString()) }
 
     fun recent(id: String): List<AgentItem> {
@@ -271,8 +313,12 @@ class AgentActivity : ComponentActivity() {
         setContent {
             val scope = rememberCoroutineScope()
             var tokenReady by remember { mutableStateOf(settings.agentToken().isNotBlank()) }
+            var listOpen by remember { mutableStateOf(false) }
+            var settingsOpenedFromDrawer by remember { mutableStateOf(false) }
             val privacyLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
                 tokenReady = settings.agentToken().isNotBlank()
+                if (settingsOpenedFromDrawer) listOpen = true
+                settingsOpenedFromDrawer = false
             }
             var sessions by remember { mutableStateOf(emptyList<AgentSession>()) }
             var selected by remember { mutableStateOf("") }
@@ -283,7 +329,11 @@ class AgentActivity : ComponentActivity() {
             var draft by remember { mutableStateOf("") }
             var error by remember { mutableStateOf("") }
             var busy by remember { mutableStateOf(false) }
-            var listOpen by remember { mutableStateOf(false) }
+            var modes by remember { mutableStateOf(emptyList<AgentChoice>()) }
+            var workspaces by remember { mutableStateOf(emptyList<AgentChoice>()) }
+            var chosenMode by remember { mutableStateOf("") }
+            var chosenWorkspace by remember { mutableStateOf("") }
+            var choicesLoading by remember { mutableStateOf(false) }
             val drawerWidthPx = with(LocalDensity.current) { LocalConfiguration.current.screenWidthDp.dp.toPx() * .75f }
             val drawerProgress = remember { Animatable(0f) }
             var dragProgress by remember { mutableFloatStateOf(0f) }
@@ -328,6 +378,20 @@ class AgentActivity : ComponentActivity() {
                 } catch (e: Exception) { error = e.message ?: "连接失败" }
             }
 
+            suspend fun refreshChoices() {
+                choicesLoading = true
+                try {
+                    val freshModes = withContext(Dispatchers.IO) { api.modes() }
+                    val freshWorkspaces = withContext(Dispatchers.IO) { api.workspaces() }
+                    modes = freshModes
+                    workspaces = freshWorkspaces
+                    if (freshModes.none { it.id == chosenMode }) chosenMode = freshModes.firstOrNull { it.isDefault }?.id ?: freshModes.firstOrNull()?.id.orEmpty()
+                    if (freshWorkspaces.none { it.id == chosenWorkspace }) chosenWorkspace = freshWorkspaces.firstOrNull()?.id.orEmpty()
+                    error = ""
+                } catch (e: Exception) { error = e.message ?: "读取电脑模式和工作区失败" }
+                finally { choicesLoading = false }
+            }
+
             suspend fun refreshSelected() {
                 val target = selected
                 if (target.isBlank()) return
@@ -359,7 +423,8 @@ class AgentActivity : ComponentActivity() {
                     try {
                         if (selected.isBlank()) {
                             streamConnected = false
-                            selected = withContext(Dispatchers.IO) { api.create() }
+                            if (chosenMode.isBlank() || chosenWorkspace.isBlank()) throw IllegalStateException("请先选择电脑模式和工作区")
+                            selected = withContext(Dispatchers.IO) { api.create(chosenWorkspace, chosenMode) }
                             items = emptyList()
                         }
                         withTimeout(10000L) { while (!streamConnected) delay(50) }
@@ -383,6 +448,10 @@ class AgentActivity : ComponentActivity() {
             }
 
             LaunchedEffect(tokenReady) { if (tokenReady) refreshList() }
+            LaunchedEffect(tokenReady, selected) {
+                if (!tokenReady || selected.isNotBlank()) return@LaunchedEffect
+                while (true) { refreshChoices(); delay(8000) }
+            }
             LaunchedEffect(selected, tokenReady) { if (tokenReady && selected.isNotBlank()) refreshSelected() }
             LaunchedEffect(selected, tokenReady) {
                 if (!tokenReady || selected.isBlank()) return@LaunchedEffect
@@ -490,15 +559,27 @@ class AgentActivity : ComponentActivity() {
                             Button(onClick = { privacyLauncher.launch(android.content.Intent(this@AgentActivity, MainActivity::class.java).putExtra("open_settings_only", true)) }) { Text("打开设置") }
                         }
                     } else if (selected.isBlank()) {
-                        Text(greetingForHour(LocalTime.now().hour), color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.align(Alignment.Center).offset(y = eyeSize / 2 + 42.dp))
+                        Column(Modifier.align(Alignment.Center).offset(y = eyeSize / 2 + 100.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(greetingForHour(LocalTime.now().hour), color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.height(20.dp))
+                            AgentChoiceMenu("模式", modes, chosenMode, choicesLoading) { chosenMode = it }
+                            Spacer(Modifier.height(8.dp))
+                            AgentChoiceMenu("工作区", workspaces, chosenWorkspace, choicesLoading) { chosenWorkspace = it }
+                        }
                     } else {
                         FairyOnlineStatus(pendingPrompt.isNotBlank(), Modifier.align(Alignment.TopStart).offset(x = 70.dp, y = 46.dp))
                         val scroll = rememberScrollState()
-                        LaunchedEffect(selected, loadedSession) {
+                        var initialScrollPending by remember(selected) { mutableStateOf(true) }
+                        LaunchedEffect(selected, loadedSession, items.size) {
                             if (selected.isNotBlank() && loadedSession == selected) {
-                                withFrameNanos { }
-                                scroll.scrollTo(scroll.maxValue)
+                                // Markdown views may grow after the first Compose layout. Keep following
+                                // their measured height until the initial conversation settles.
+                                repeat(24) {
+                                    withFrameNanos { }
+                                    if (initialScrollPending) scroll.scrollTo(scroll.maxValue)
+                                    delay(70)
+                                }
+                                initialScrollPending = false
                             }
                         }
                         LaunchedEffect(items.size, liveText) { if (!scroll.isScrollInProgress && scroll.maxValue - scroll.value < 120) scroll.scrollTo(scroll.maxValue) }
@@ -614,7 +695,7 @@ class AgentActivity : ComponentActivity() {
                         }
                     }
                     Text("设置  ›", color = ThemeTokens.text, modifier = Modifier.fillMaxWidth().clickable {
-                        listOpen = false
+                        settingsOpenedFromDrawer = true
                         privacyLauncher.launch(android.content.Intent(this@AgentActivity, MainActivity::class.java).putExtra("open_settings_only", true))
                     }.padding(vertical = 16.dp))
                 }

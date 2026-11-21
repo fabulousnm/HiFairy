@@ -93,9 +93,12 @@ export function findDetail(snapshot, kind, key) {
     if (!call && !result) return null
     const args = call?.data?.arguments
     const parsedArgs = typeof args === 'string' ? (() => { try { return JSON.parse(args) } catch { return null } })() : args
-    const terminal = /(?:bash|shell|terminal|powershell|exec_command|ops_bash)/i.test(call?.data?.name ?? '')
+    const resultText = textOf(result?.data?.message?.content) || detailText(result?.data?.message?.content)
+    const terminal = /(?:bash|shell|terminal|powershell|exec_command|ops_bash|exec|run_command)/i.test(call?.data?.name ?? '') ||
+      Boolean(parsedArgs && typeof parsedArgs === 'object' && ['command', 'cmd', 'script', 'shell'].some(key => key in parsedArgs)) ||
+      /\\(?:newcommand|usepackage|documentclass|begin\{|end\{)/.test(resultText)
     return { arguments: detailText(args), input: terminal ? detailText(parsedArgs?.command ?? parsedArgs?.cmd ?? parsedArgs?.script ?? args) : detailText(args),
-      result: textOf(result?.data?.message?.content) || detailText(result?.data?.message?.content), terminal,
+      result: resultText, terminal,
       isError: Boolean(result?.data?.message?.isError) }
   }
   return null

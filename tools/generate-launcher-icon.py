@@ -39,7 +39,8 @@ def main() -> None:
     for child in list(root):
         if child.tag == f"{{{SVG_NS}}}rect":
             root.remove(child)
-    root.set("viewBox", "-14 -14 92 92")
+    # The eye occupies half the former linear size, centered on the same 32,32 SVG origin.
+    root.set("viewBox", "-60 -60 184 184")
     foreground = render(ET.tostring(root))
     legacy = Image.new("RGBA", (MASTER_SIZE, MASTER_SIZE), "white")
     legacy.alpha_composite(foreground)

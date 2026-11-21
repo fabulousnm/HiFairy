@@ -4,7 +4,7 @@ import { randomUUID, timingSafeEqual } from 'node:crypto'
 import { HOST_MESSAGE_WINDOW, recentItems, findDetail } from './recent.js'
 
 export const name = 'hifairy-dsh-host-probe'
-export const inject = ['sessionController']
+export const inject = ['sessionController', 'workspaceRegistry', 'agentPresets']
 
 function authorized(request, token) {
   const candidate = request.headers.authorization?.replace(/^Bearer /, '') ?? ''
@@ -30,10 +30,34 @@ async function readJson(request) {
 export function createProbeServer(controller, token, options = {}) {
   return createServer(async (request, response) => {
     if (!authorized(request, token)) return respond(response, 401, { error: 'unauthorized' })
-    if (request.method === 'POST' && request.url === '/sessions') {
-      if (!options.workspaceId) return respond(response, 503, { error: 'workspace_unconfigured' })
+    if (request.method === 'GET' && request.url === '/workspaces') {
       try {
-        const result = await controller.create({ workspaceId: options.workspaceId })
+        return respond(response, 200, { items: options.workspaceRegistry.list().map(item => ({
+          id: item.id, title: item.title || item.path, path: item.path
+        })) })
+      } catch (error) { return respond(response, 503, { error: 'workspaces_unavailable', detail: String(error?.message ?? error) }) }
+    }
+    if (request.method === 'GET' && request.url === '/modes') {
+      try {
+        const presets = await options.agentPresets.list()
+        return respond(response, 200, { items: presets.map(item => ({
+          id: item.id, title: item.name || item.title || item.id,
+          description: item.description || '', available: !item.error && !item.reason,
+          isDefault: item.isDefault || item.id === options.agentPresets.defaultId
+        })) })
+      } catch (error) { return respond(response, 503, { error: 'modes_unavailable', detail: String(error?.message ?? error) }) }
+    }
+    if (request.method === 'POST' && request.url === '/sessions') {
+      try {
+        const body = await readJson(request)
+        const workspaces = options.workspaceRegistry.list()
+        const workspaceId = body.workspaceId || options.workspaceId
+        if (!workspaces.some(item => item.id === workspaceId)) return respond(response, 400, { error: 'workspace_not_found' })
+        const presets = await options.agentPresets.list()
+        const agentPreset = body.agentPreset || options.agentPresets.defaultId
+        if (!presets.some(item => item.id === agentPreset && !item.error && !item.reason))
+          return respond(response, 400, { error: 'mode_not_found' })
+        const result = await controller.create({ workspaceId, agentPreset })
         return respond(response, 201, { sessionId: result.sessionId })
       } catch (error) {
         return respond(response, 503, { error: 'host_unavailable', detail: String(error?.message ?? error) })
@@ -140,7 +164,9 @@ export function apply(ctx, config) {
   if (!config?.tokenFile) throw new Error('HiFairy probe requires a tokenFile')
   const token = readFileSync(config.tokenFile, 'utf8').trim()
   if (token.length < 32) throw new Error('HiFairy probe token must contain at least 32 characters')
-  const server = createProbeServer(ctx.sessionController, token, { workspaceId: config.workspaceId })
+  const server = createProbeServer(ctx.sessionController, token, {
+    workspaceId: config.workspaceId, workspaceRegistry: ctx.workspaceRegistry, agentPresets: ctx.agentPresets
+  })
   ctx.effect(() => {
     server.listen(config.port ?? 18765, '127.0.0.1')
     return () => server.close()
