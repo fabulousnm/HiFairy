@@ -15,7 +15,7 @@ test('selects fifteen real question-answer turns, keeping full answers and compa
       add('tool/result', { message: { toolCallId: 'call-1', content: [{ type: 'text', text: 'file content' }] } })
       add('step/end', { turn: n, step: 1 })
     }
-    add('assistant/message', { turn: n, message: { id: `a${n}`, content: [
+    add('assistant/message', { turn: n, step: n === 19 ? 1 : undefined, message: { id: `a${n}`, content: [
       ...(n === 19 ? [{ type: 'reasoning', text: '思考内容'.repeat(100) }] : []),
       { type: 'text', text: n === 19 ? '完整回答'.repeat(120) : `answer ${n}` }] } })
   }
@@ -25,9 +25,13 @@ test('selects fifteen real question-answer turns, keeping full answers and compa
   assert.equal(result.items.filter(x => x.kind === 'assistant').length, 15)
   assert.equal(result.items.some(x => x.text === 'internal context'), false)
   assert.equal(result.items.find(x => x.id === 'a19').text.length, 480)
+  assert.equal(result.items.find(x => x.kind === 'tool').parentId, 'work-19-1')
+  assert.equal(result.items.find(x => x.kind === 'reasoning').parentId, 'work-19-1')
   const tail = result.items.slice(-4).map(x => x.kind)
   assert.deepEqual(tail, ['tool', 'work', 'reasoning', 'assistant'].sort((a, b) => ({ work: 0, tool: 1, reasoning: 2, assistant: 3 })[a] - ({ work: 0, tool: 1, reasoning: 2, assistant: 3 })[b]))
   assert.equal(findDetail({ records }, 'tool', 'call-1').result, 'file content')
+  assert.equal(findDetail({ records }, 'tool', 'call-1').input, 'pwd')
+  assert.equal(findDetail({ records }, 'tool', 'call-1').terminal, true)
   assert.equal(findDetail({ records }, 'reasoning', String(seq)).text.length, 400)
 })
 

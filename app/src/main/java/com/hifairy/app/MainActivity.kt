@@ -224,7 +224,7 @@ private fun normalizeMath(markdown: String): String = markdown
     .replace("\\(", "$$").replace("\\)", "$$")
 
 @Composable
-private fun MarkdownMessage(message: String, modifier: Modifier = Modifier, copyCode: Boolean = false) {
+internal fun MarkdownMessage(message: String, modifier: Modifier = Modifier, copyCode: Boolean = false, textSizeSp: Float = 16f) {
     val context = LocalContext.current
     val hasCodeBlock = remember(message) { codeSnippets(message).isNotEmpty() }
     val markwon = remember(context) {
@@ -248,13 +248,14 @@ private fun MarkdownMessage(message: String, modifier: Modifier = Modifier, copy
         FrameLayout(androidContext).apply {
             addView(CodeCardTextView(androidContext).apply {
                 tag = "markdown-text"
-                setTextColor(android.graphics.Color.rgb(232, 243, 255)); textSize = 16f
+                setTextColor(android.graphics.Color.rgb(232, 243, 255)); textSize = textSizeSp
                 setLineSpacing(4f, 1f); setTextIsSelectable(true)
                 setLinkTextColor(android.graphics.Color.rgb(143, 180, 255))
             }, FrameLayout.LayoutParams(if (hasCodeBlock) -1 else -2, -2))
         }
     }, update = { container ->
         val textView = container.findViewWithTag<CodeCardTextView>("markdown-text")
+        textView.textSize = textSizeSp
         val targetWidth = if (hasCodeBlock) -1 else -2
         if (textView.layoutParams.width != targetWidth) {
             textView.layoutParams = (textView.layoutParams as FrameLayout.LayoutParams).apply { width = targetWidth }

@@ -47,6 +47,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -72,10 +73,27 @@ import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
 
 private data class AgentSession(val id: String, val title: String)
-private data class AgentItem(val id: String, val kind: String, val text: String, val title: String, val preview: String, val detailKey: String, val hasResult: Boolean)
+private data class AgentItem(val id: String, val kind: String, val text: String, val title: String, val detailKey: String, val parentId: String, val hasResult: Boolean)
+private data class AgentDetail(val text: String = "", val input: String = "", val output: String = "", val terminal: Boolean = false)
 
 @Composable
-private fun AgentRecordCard(item: AgentItem, expandedText: String?, onClick: () -> Unit) {
+private fun AgentTerminalSection(label: String, content: String, onCopy: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(top = 7.dp).background(Color(ThemeTokens.codeBackground), RoundedCornerShape(11.dp))
+        .border(1.dp, ThemeTokens.codeCardRim.let { Color(it) }.copy(alpha = .65f), RoundedCornerShape(11.dp))) {
+        Row(Modifier.fillMaxWidth().padding(start = 10.dp, end = 3.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("●  $label", color = ThemeTokens.accent, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+            MessageAction("copy", "复制$label", onCopy, ThemeTokens.secondary)
+        }
+        Text(content.ifBlank { "（无内容）" }, color = ThemeTokens.text, fontSize = 11.sp, lineHeight = 16.sp,
+            fontFamily = FontFamily.Monospace, modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)
+                .verticalScroll(rememberScrollState()).padding(start = 10.dp, end = 10.dp, bottom = 10.dp))
+    }
+}
+
+@Composable
+private fun AgentRecordCard(item: AgentItem, detail: AgentDetail?, depth: Int = 0, childCount: Int = 0,
+                            onClick: () -> Unit, onCopy: (String, String) -> Unit) {
     val tint = when (item.kind) {
         "tool" -> Color(0xFF83B9CA)
         "terminal" -> Color(0xFF83B9CA)
@@ -83,19 +101,31 @@ private fun AgentRecordCard(item: AgentItem, expandedText: String?, onClick: () 
         "commentary" -> Color(0xFFB7A3DF)
         else -> ThemeTokens.accent
     }
-    Column(Modifier.fillMaxWidth().padding(start = 44.dp, bottom = 3.dp), horizontalAlignment = Alignment.Start) {
-        Row(Modifier.widthIn(max = 300.dp).background(ThemeTokens.reasoningBubble, RoundedCornerShape(8.dp))
+    Column(Modifier.fillMaxWidth().padding(start = (44 + depth * 14).dp, bottom = 3.dp), horizontalAlignment = Alignment.Start) {
+        Row(Modifier.width(270.dp - (depth * 14).dp).background(ThemeTokens.reasoningBubble, RoundedCornerShape(8.dp))
             .border(1.dp, tint.copy(alpha = .24f), RoundedCornerShape(8.dp))
             .clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text((when (item.kind) { "tool" -> "⚙"; "terminal" -> "⌁"; "work" -> "◇"; else -> "◌" }) + "  " + item.title,
-                color = tint, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-            Text(if (expandedText == null) "  ›" else "  ⌄", color = tint, fontSize = 11.sp)
+            Text((when (item.kind) { "tool" -> "⚙"; "terminal" -> "⌁"; "work" -> "◇"; else -> "◌" }) + "  " + item.title +
+                if (childCount > 0) "  ·  $childCount 项" else "",
+                color = tint, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text(if (detail == null) "›" else "⌄", color = tint, fontSize = 11.sp)
         }
-        if (expandedText != null) Text(expandedText, color = ThemeTokens.text, fontSize = 11.sp, lineHeight = 16.sp,
-            modifier = Modifier.widthIn(max = 300.dp).heightIn(max = 260.dp).padding(top = 4.dp)
-                .background(ThemeTokens.surface, RoundedCornerShape(9.dp))
-                .border(1.dp, tint.copy(alpha = .25f), RoundedCornerShape(9.dp))
-                .verticalScroll(rememberScrollState()).padding(9.dp))
+        if (detail != null) Column(Modifier.width(270.dp - (depth * 14).dp).padding(top = 4.dp)
+            .background(ThemeTokens.surface, RoundedCornerShape(9.dp))
+            .border(1.dp, tint.copy(alpha = .25f), RoundedCornerShape(9.dp)).padding(9.dp)) {
+            if (item.kind == "tool") {
+                if (detail.terminal) {
+                    AgentTerminalSection("输入", detail.input) { onCopy("工具输入", detail.input) }
+                    AgentTerminalSection("输出", detail.output) { onCopy("工具输出", detail.output) }
+                } else {
+                    Text("输入", color = tint, fontSize = 10.sp)
+                    MarkdownMessage(detail.input, Modifier.fillMaxWidth(), textSizeSp = 12f)
+                    Text("输出", color = tint, fontSize = 10.sp, modifier = Modifier.padding(top = 8.dp))
+                    MarkdownMessage(detail.output, Modifier.fillMaxWidth(), textSizeSp = 12f)
+                }
+            } else if (item.kind == "terminal") AgentTerminalSection("终端记录", detail.text) { onCopy("终端记录", detail.text) }
+            else MarkdownMessage(detail.text, Modifier.fillMaxWidth(), textSizeSp = 12f)
+        }
     }
 }
 
@@ -187,13 +217,14 @@ private class AgentConnection(private val settings: SecureSettings) {
         val items = request("/sessions/$id/recent").getJSONArray("items")
         return (0 until items.length()).map { items.getJSONObject(it) }.map {
             AgentItem(it.optString("id"), it.optString("kind"), it.optString("text"),
-                it.optString("title"), it.optString("preview"), it.optString("detailKey"), it.optBoolean("hasResult"))
+                it.optString("title"), it.optString("detailKey"), it.optString("parentId"), it.optBoolean("hasResult"))
         }
     }
 
-    fun detail(id: String, item: AgentItem): String {
+    fun detail(id: String, item: AgentItem): AgentDetail {
         val json = request("/sessions/$id/details/${item.kind}/${item.detailKey}")
-        return if (item.kind == "tool") "输入\n${json.optString("arguments")}\n\n输出\n${json.optString("result")}" else json.optString("text")
+        return if (item.kind == "tool") AgentDetail(input = json.optString("input"), output = json.optString("result"), terminal = json.optBoolean("terminal"))
+            else AgentDetail(text = json.optString("text"))
     }
 
     suspend fun follow(id: String, onFrame: (JSONObject) -> Unit) = suspendCancellableCoroutine<Unit> { continuation ->
@@ -246,7 +277,7 @@ class AgentActivity : ComponentActivity() {
             var items by remember { mutableStateOf(emptyList<AgentItem>()) }
             var loadingHistory by remember { mutableStateOf(false) }
             var loadedSession by remember { mutableStateOf("") }
-            val expanded = remember { mutableStateMapOf<String, String>() }
+            val expanded = remember { mutableStateMapOf<String, AgentDetail>() }
             var draft by remember { mutableStateOf("") }
             var error by remember { mutableStateOf("") }
             var busy by remember { mutableStateOf(false) }
@@ -304,6 +335,19 @@ class AgentActivity : ComponentActivity() {
                     if (selected == target) { items = result; loadedSession = target; error = "" }
                 } catch (e: Exception) { if (selected == target) error = e.message ?: "读取会话失败" }
                 finally { if (selected == target) loadingHistory = false }
+            }
+
+            fun toggleRecord(item: AgentItem) {
+                if (expanded.containsKey(item.id)) { expanded.remove(item.id); return }
+                if (item.kind == "work") { expanded[item.id] = AgentDetail(text = item.text); return }
+                scope.launch {
+                    val requestedSession = selected
+                    expanded[item.id] = AgentDetail(text = "正在读取…")
+                    try {
+                        val detail = withContext(Dispatchers.IO) { api.detail(requestedSession, item) }
+                        if (selected == requestedSession) expanded[item.id] = detail
+                    } catch (e: Exception) { if (selected == requestedSession) expanded[item.id] = AgentDetail(text = e.message ?: "读取失败") }
+                }
             }
 
             fun submit(text: String) {
@@ -449,6 +493,12 @@ class AgentActivity : ComponentActivity() {
                         AgentHoldEye(54.dp, Modifier.align(Alignment.TopStart).offset(y = 28.dp), pendingPrompt.isNotBlank()) { finish() }
                         FairyOnlineStatus(pendingPrompt.isNotBlank(), Modifier.align(Alignment.TopStart).offset(x = 70.dp, y = 46.dp))
                         val scroll = rememberScrollState()
+                        LaunchedEffect(selected, loadedSession) {
+                            if (selected.isNotBlank() && loadedSession == selected) {
+                                withFrameNanos { }
+                                scroll.scrollTo(scroll.maxValue)
+                            }
+                        }
                         LaunchedEffect(items.size, liveText) { if (!scroll.isScrollInProgress && scroll.maxValue - scroll.value < 120) scroll.scrollTo(scroll.maxValue) }
                         Column(Modifier.fillMaxSize().padding(top = 94.dp).verticalScroll(scroll)) {
                             items.forEachIndexed { index, item ->
@@ -461,28 +511,28 @@ class AgentActivity : ComponentActivity() {
                                             if (playingIndex == index) { speechPlayer.stop(); playingIndex = -1 }
                                             else if (speechPlayer.play(settings.voiceEndpoint, settings.voiceToken(), item.text, index.toLong())) playingIndex = index
                                         }, assistantName = "DSH", showActions = item.kind == "assistant")
-                                } else {
-                                    AgentRecordCard(item, expanded[item.id], onClick = {
-                                        if (expanded.containsKey(item.id)) expanded.remove(item.id)
-                                        else if (item.kind == "work") expanded[item.id] = item.text
-                                        else scope.launch {
-                                            val requestedSession = selected
-                                            expanded[item.id] = "正在读取…"
-                                            try {
-                                                val detail = withContext(Dispatchers.IO) { api.detail(requestedSession, item) }
-                                                if (selected == requestedSession) expanded[item.id] = detail
-                                            } catch (e: Exception) { if (selected == requestedSession) expanded[item.id] = e.message ?: "读取失败" }
-                                        }
-                                    })
+                                } else if (item.parentId.isBlank()) {
+                                    val children = if (item.kind == "work") items.filter { it.parentId == item.id } else emptyList()
+                                    AgentRecordCard(item, expanded[item.id], childCount = children.size,
+                                        onClick = { toggleRecord(item) }, onCopy = { label, value ->
+                                            (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText(label, value))
+                                        })
+                                    if (item.kind == "work" && expanded.containsKey(item.id)) children.forEach { child ->
+                                        AgentRecordCard(child, expanded[child.id], depth = 1,
+                                            onClick = { toggleRecord(child) }, onCopy = { label, value ->
+                                                (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText(label, value))
+                                            })
+                                    }
                                 }
                             }
                             if (pendingPrompt.isNotBlank() && items.lastOrNull { it.kind == "user" }?.text != pendingPrompt)
                                 ChatBubble(ChatMessage("user", pendingPrompt), settings.displayName, settings.avatar, false, false, false, false, true, {}, {}, {}, {}, {})
                             if (liveReasoning.isNotBlank()) AgentRecordCard(
-                                AgentItem("live-reasoning", "reasoning", "", "思考进行中", liveReasoning.take(220), "", false),
-                                expanded["live-reasoning"], onClick = {
-                                    if (expanded.containsKey("live-reasoning")) expanded.remove("live-reasoning") else expanded["live-reasoning"] = liveReasoning
-                                })
+                                AgentItem("live-reasoning", "reasoning", "", "思考进行中", "", "", false),
+                                if (expanded.containsKey("live-reasoning")) AgentDetail(text = liveReasoning) else null,
+                                onClick = {
+                                    if (expanded.containsKey("live-reasoning")) expanded.remove("live-reasoning") else expanded["live-reasoning"] = AgentDetail(text = liveReasoning)
+                                }, onCopy = { _, _ -> })
                             if (pendingPrompt.isNotBlank() || liveText.isNotBlank() || liveReasoning.isNotBlank())
                                 ChatBubble(ChatMessage("assistant", liveText), settings.displayName, settings.avatar, false, false, false, false, true, {}, {}, {}, {}, {}, showActions = false, assistantName = "DSH")
                         }

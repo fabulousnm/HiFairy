@@ -17,6 +17,10 @@ export function recentItems(snapshot, limit = RECENT_TURN_LIMIT) {
   const flush = () => { items.push(...pending); pending.length = 0 }
   const tools = new Map()
   const steps = new Map()
+  const parentOf = data => {
+    const id = `work-${data.turn}-${data.step}`
+    return steps.has(`${data.turn}-${data.step}`) ? id : undefined
+  }
   const seenMessages = new Set()
 
   for (const event of selected) {
@@ -36,14 +40,14 @@ export function recentItems(snapshot, limit = RECENT_TURN_LIMIT) {
       if (seenMessages.has(id)) continue
       seenMessages.add(id)
       const reasoning = (message.content ?? []).filter(block => block?.type === 'reasoning').map(block => block.text ?? '').join('')
-      if (reasoning) pending.push({ id: `reasoning-${event.seq}`, kind: 'reasoning', title: '思考', detailKey: String(event.seq) })
+      if (reasoning) pending.push({ id: `reasoning-${event.seq}`, kind: 'reasoning', title: '思考', detailKey: String(event.seq), parentId: parentOf(data) })
       const content = textOf(message.content)
       if (content && (message.content ?? []).some(block => block?.type === 'tool-call'))
-        pending.push({ id: `commentary-${event.seq}`, kind: 'commentary', title: '工作说明', detailKey: String(event.seq) })
+        pending.push({ id: `commentary-${event.seq}`, kind: 'commentary', title: '工作说明', detailKey: String(event.seq), parentId: parentOf(data) })
       else if (content) { flush(); items.push({ id, kind: 'assistant', text: content }) }
     } else if (event.type === 'tool/call') {
       const id = data.callId ?? `tool-${event.seq}`
-      const item = { id: `tool-${id}`, kind: 'tool', title: data.name ?? '工具调用', detailKey: id, hasResult: false, isError: false }
+      const item = { id: `tool-${id}`, kind: 'tool', title: data.name ?? '工具调用', detailKey: id, parentId: parentOf(data), hasResult: false, isError: false }
       tools.set(id, item)
       pending.push(item)
       const step = steps.get(`${data.turn}-${data.step}`)
@@ -87,7 +91,11 @@ export function findDetail(snapshot, kind, key) {
     const call = events.find(event => event.type === 'tool/call' && event.data?.callId === key)
     const result = events.find(event => event.type === 'tool/result' && event.data?.message?.toolCallId === key)
     if (!call && !result) return null
-    return { arguments: detailText(call?.data?.arguments), result: textOf(result?.data?.message?.content) || detailText(result?.data?.message?.content),
+    const args = call?.data?.arguments
+    const parsedArgs = typeof args === 'string' ? (() => { try { return JSON.parse(args) } catch { return null } })() : args
+    const terminal = /(?:bash|shell|terminal|powershell|exec_command|ops_bash)/i.test(call?.data?.name ?? '')
+    return { arguments: detailText(args), input: terminal ? detailText(parsedArgs?.command ?? parsedArgs?.cmd ?? parsedArgs?.script ?? args) : detailText(args),
+      result: textOf(result?.data?.message?.content) || detailText(result?.data?.message?.content), terminal,
       isError: Boolean(result?.data?.message?.isError) }
   }
   return null

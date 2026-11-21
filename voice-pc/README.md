@@ -36,6 +36,8 @@ Agent 实时回复使用同域 WebSocket `wss://…/agent/live/{sessionId}`，�
 
 Agent 历史目录 `GET /agent/sessions` 只返回会话元数据；打开某条会话时 `GET /agent/sessions/{id}/recent` 返回最近 15 轮真实用户提问、对应完整回答及折叠记录，内部通知和工具调用不占轮数。展开思考、工具、终端转录或工作说明后再访问 `GET /agent/sessions/{id}/details/{reasoning|tool|terminal|commentary}/{key}`。实时 WebSocket 不转发整份快照，避免重复传输。电脑 DSH 重新启动后才会加载桥接插件文件的改动。
 
+`recent` 中的记录可带 `parentId`，表示归属的 `work-{turn}-{step}`；手机默认只显示步骤父级。工具详情返回 `input`、`result` 和 `terminal`，终端调用分别展示并复制输入和输出；其他详情用应用共用的 Markdown 渲染。
+
 ```powershell
 & '<虚拟环境>\Scripts\python.exe' voice-pc\server.py
 & '<虚拟环境>\Scripts\python.exe' voice-pc\client_benchmark.py ws://127.0.0.1:8765/stream
