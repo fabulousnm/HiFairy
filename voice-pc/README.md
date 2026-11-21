@@ -38,6 +38,8 @@ Agent 历史目录 `GET /agent/sessions` 只返回会话元数据；打开某条
 
 新任务页从电脑 DSH 的 `agentPresets.list()` 和 `workspaceRegistry.list()` 读取模式及已登记工作区：`GET /agent/modes`、`GET /agent/workspaces`。应用启动后首次进入新任务页、以及每次点击新任务进入该页时各读取一次，不在页面内定时轮询。电脑端的增删会在下一次进入新任务页时反映出来。创建会话时 `POST /agent/sessions` 传 `agentPreset` 和 `workspaceId`，Host 再以当前列表校验，避免使用过期选择；未传参数的旧客户端沿用 Host 默认模式和配置工作区。此选择只作用于新会话，不改变电脑 DSH 的全局默认设置。
 
+新任务页在输入框上方以紧凑图标按钮显示当前模式与工作区；选项向上弹出，当前选择用主题色标记。DSH 的 `step/start` 通常先于该轮 `user/message` 发出，历史记录会把这条步骤展示在对应用户消息之后，仍保持步骤内部的工具、思考与回答顺序。
+
 手机发送消息使用 HTTPS POST，电脑 DSH 的当前会话事件通过本地 SSE → 同域 WebSocket 推送给手机。手机仅对当前打开的会话建立实时订阅；抽屉中的其他会话仅保留轻量元数据，点开后再拉最近 15 轮与按需详情。WebSocket 首帧仅用于令牌认证和后续服务端推送，业务发送并不走双向 WebSocket。历史列表在打开、当前任务结束及实时连接重试时刷新。
 
 `recent` 中的记录可带 `parentId`，表示归属的 `work-{turn}-{step}`；手机默认只显示步骤父级。工具详情返回 `input`、`result` 和 `terminal`，终端调用分别展示并复制输入和输出；其他详情用应用共用的 Markdown 渲染。

@@ -10,7 +10,12 @@ const isTerminalTranscript = text => /^(?:PS\s+[^\r\n>]+>|[\w./~:\\-]+\s*[$#>])\
 export function recentItems(snapshot, limit = RECENT_TURN_LIMIT) {
   const events = (snapshot.records ?? []).filter(record => record.type === 'event' && record.event).map(record => record.event)
   const prompts = events.filter(isRealUser)
-  const cutoff = prompts.at(-limit)?.seq ?? events[0]?.seq ?? 0
+  const firstPromptSeq = prompts.at(-limit)?.seq ?? events[0]?.seq ?? 0
+  // DSH emits step/start before the user's prompt. Include that leading step
+  // for the oldest selected turn instead of cutting exactly at user/message.
+  const earlierTurnEnd = events.filter(event => event.seq < firstPromptSeq && event.type === 'turn/end').at(-1)?.seq
+  const precedingStep = events.filter(event => event.seq < firstPromptSeq && event.type === 'step/start' && event.data?.step === 1).at(-1)?.seq
+  const cutoff = earlierTurnEnd === undefined ? (precedingStep ?? firstPromptSeq) : earlierTurnEnd + 1
   const selected = events.filter(event => event.seq >= cutoff)
   const items = []
   const pending = []
@@ -26,14 +31,16 @@ export function recentItems(snapshot, limit = RECENT_TURN_LIMIT) {
   for (const event of selected) {
     const data = event.data ?? {}
     if (isRealUser(event)) {
-      flush()
       const id = data.id ?? `user-${event.seq}`
-      if (seenMessages.has(id)) continue
-      seenMessages.add(id)
-      const content = textOf(data.content)
-      if (!content) continue
-      if (isTerminalTranscript(content)) items.push({ id, kind: 'terminal', title: '终端记录', detailKey: String(event.seq) })
-      else items.push({ id, kind: 'user', text: content })
+      if (!seenMessages.has(id)) {
+        seenMessages.add(id)
+        const content = textOf(data.content)
+        if (content) {
+          if (isTerminalTranscript(content)) items.push({ id, kind: 'terminal', title: '终端记录', detailKey: String(event.seq) })
+          else items.push({ id, kind: 'user', text: content })
+        }
+      }
+      flush()
     } else if (event.type === 'assistant/message') {
       const message = data.message ?? {}
       const id = message.id ?? `assistant-${event.seq}`
@@ -66,6 +73,8 @@ export function recentItems(snapshot, limit = RECENT_TURN_LIMIT) {
         const ms = Math.max(0, (event.time ?? 0) - (entry.time ?? 0))
         entry.item.text = `已完成 · ${ms} ms\n${entry.tools.length ? `调用：${entry.tools.join('、')}` : '本步骤无工具调用'}`
       }
+    } else if (event.type === 'turn/end') {
+      flush()
     }
   }
   flush()

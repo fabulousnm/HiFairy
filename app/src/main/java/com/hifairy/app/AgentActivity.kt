@@ -40,8 +40,14 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.graphics.Path
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -80,26 +86,75 @@ private data class AgentDetail(val text: String = "", val input: String = "", va
 private data class AgentChoice(val id: String, val title: String, val isDefault: Boolean = false)
 
 @Composable
-private fun AgentChoiceMenu(label: String, choices: List<AgentChoice>, selectedId: String,
+private fun AgentChoiceIcon(folder: Boolean, modifier: Modifier = Modifier) {
+    Canvas(modifier.size(16.dp)) {
+        val stroke = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round)
+        if (folder) {
+            val shape = Path().apply {
+                moveTo(size.width * .08f, size.height * .27f)
+                lineTo(size.width * .39f, size.height * .27f)
+                lineTo(size.width * .49f, size.height * .39f)
+                lineTo(size.width * .92f, size.height * .39f)
+                lineTo(size.width * .86f, size.height * .83f)
+                lineTo(size.width * .12f, size.height * .83f)
+                close()
+            }
+            drawPath(shape, ThemeTokens.accent, style = stroke)
+        } else {
+            drawCircle(ThemeTokens.accent, radius = size.minDimension * .39f, style = stroke)
+            drawCircle(ThemeTokens.accent, radius = size.minDimension * .14f)
+            drawLine(ThemeTokens.accent, androidx.compose.ui.geometry.Offset(size.width * .5f, 0f),
+                androidx.compose.ui.geometry.Offset(size.width * .5f, size.height * .12f), strokeWidth = 1.6.dp.toPx())
+        }
+    }
+}
+
+@Composable
+private fun AgentChoiceMenu(folder: Boolean, choices: List<AgentChoice>, selectedId: String,
                             loading: Boolean, onSelect: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     val selected = choices.firstOrNull { it.id == selectedId }
-    Box {
-        Row(Modifier.widthIn(min = 220.dp, max = 300.dp)
-            .background(ThemeTokens.surface, RoundedCornerShape(14.dp))
-            .border(1.dp, ThemeTokens.accent.copy(alpha = .32f), RoundedCornerShape(14.dp))
-            .clickable(enabled = choices.isNotEmpty()) { expanded = true }
-            .padding(horizontal = 14.dp, vertical = 11.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("$label  ·  ${selected?.title ?: if (loading) "正在同步…" else "暂无可用选项"}",
-                color = ThemeTokens.text, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f))
-            Text("⌄", color = ThemeTokens.accent, fontSize = 13.sp)
+    val density = LocalDensity.current
+    val popupPositioner = remember(density) { object : PopupPositionProvider {
+        override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize,
+                                       layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
+            val gap = with(density) { 8.dp.roundToPx() }
+            return IntOffset(anchorBounds.left.coerceIn(0, (windowSize.width - popupContentSize.width).coerceAtLeast(0)),
+                (anchorBounds.top - popupContentSize.height - gap).coerceAtLeast(0))
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false },
-            containerColor = ThemeTokens.surface) {
-            choices.forEach { choice ->
-                DropdownMenuItem(text = { Text(choice.title, color = ThemeTokens.text, fontSize = 13.sp) },
-                    onClick = { onSelect(choice.id); expanded = false })
+    } }
+    Box {
+        Row(Modifier.widthIn(max = 168.dp).height(34.dp)
+            .shadow(3.dp, RoundedCornerShape(12.dp))
+            .background(ThemeTokens.raisedCard, RoundedCornerShape(12.dp))
+            .border(1.dp, ThemeTokens.accent.copy(alpha = .35f), RoundedCornerShape(12.dp))
+            .clickable(enabled = choices.isNotEmpty()) { expanded = true }
+            .padding(horizontal = 9.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            AgentChoiceIcon(folder)
+            Text(selected?.title ?: if (loading) "同步中…" else "暂无选项",
+                color = ThemeTokens.text, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("⌃", color = ThemeTokens.accent, fontSize = 11.sp)
+        }
+        if (expanded) Popup(popupPositionProvider = popupPositioner,
+            onDismissRequest = { expanded = false }, properties = PopupProperties(focusable = true)) {
+            Column(Modifier.widthIn(min = 185.dp, max = 260.dp).heightIn(max = 350.dp)
+                .shadow(18.dp, RoundedCornerShape(16.dp))
+                .background(ThemeTokens.surface, RoundedCornerShape(16.dp))
+                .border(1.dp, ThemeTokens.accent.copy(alpha = .48f), RoundedCornerShape(16.dp))
+                .verticalScroll(rememberScrollState()).padding(6.dp)) {
+                choices.forEach { choice ->
+                    val active = choice.id == selectedId
+                    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                        .background(if (active) ThemeTokens.accent.copy(alpha = .19f) else Color.Transparent, RoundedCornerShape(10.dp))
+                        .clickable { onSelect(choice.id); expanded = false }
+                        .padding(horizontal = 10.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(choice.title, color = if (active) ThemeTokens.accent else ThemeTokens.text,
+                            fontSize = 12.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                            modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (active) Text("✓", color = ThemeTokens.accent, fontSize = 12.sp)
+                    }
+                }
             }
         }
     }
@@ -561,13 +616,8 @@ class AgentActivity : ComponentActivity() {
                             Button(onClick = { privacyLauncher.launch(android.content.Intent(this@AgentActivity, MainActivity::class.java).putExtra("open_settings_only", true)) }) { Text("打开设置") }
                         }
                     } else if (selected.isBlank()) {
-                        Column(Modifier.align(Alignment.Center).offset(y = eyeSize / 2 + 100.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(greetingForHour(LocalTime.now().hour), color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
-                            Spacer(Modifier.height(20.dp))
-                            AgentChoiceMenu("模式", modes, chosenMode, choicesLoading) { chosenMode = it }
-                            Spacer(Modifier.height(8.dp))
-                            AgentChoiceMenu("工作区", workspaces, chosenWorkspace, choicesLoading) { chosenWorkspace = it }
-                        }
+                        Text(greetingForHour(LocalTime.now().hour), color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.align(Alignment.Center).offset(y = eyeSize / 2 + 42.dp))
                     } else {
                         FairyOnlineStatus(pendingPrompt.isNotBlank(), Modifier.align(Alignment.TopStart).offset(x = 70.dp, y = 46.dp))
                         val scroll = rememberScrollState()
@@ -625,6 +675,11 @@ class AgentActivity : ComponentActivity() {
                     }
                 }
                 if (error.isNotBlank()) Text(error, color = ThemeTokens.accent, fontSize = 12.sp)
+                if (tokenReady && selected.isBlank()) Row(Modifier.fillMaxWidth().padding(start = 4.dp, bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    AgentChoiceMenu(false, modes, chosenMode, choicesLoading) { chosenMode = it }
+                    AgentChoiceMenu(true, workspaces, chosenWorkspace, choicesLoading) { chosenWorkspace = it }
+                }
                 if (tokenReady && voiceMode) {
                     var dragY by remember { mutableFloatStateOf(0f) }
                     Row(Modifier.fillMaxWidth().background(ThemeTokens.surface, RoundedCornerShape(18.dp))

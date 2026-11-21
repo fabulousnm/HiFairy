@@ -76,3 +76,18 @@ test('keeps work narration with tool calls out of answer bubbles', () => {
   assert.deepEqual(result.items.map(x => x.kind), ['user', 'commentary', 'assistant'])
   assert.equal(findDetail({ records }, 'commentary', '2').text, '我先查看目录')
 })
+
+test('places the step/start emitted before a prompt under that user message', () => {
+  const records = [
+    { type: 'event', event: { seq: 1, type: 'turn/end', data: { turn: 1 } } },
+    { type: 'event', event: { seq: 2, type: 'step/start', data: { turn: 2, step: 1 } } },
+    { type: 'event', event: { seq: 3, type: 'user/message', data: {
+      id: 'u2', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '第二轮问题' }] } } },
+    { type: 'event', event: { seq: 4, type: 'assistant/message', data: {
+      turn: 2, step: 1, message: { id: 'a2', content: [{ type: 'text', text: '第二轮回答' }] } } } },
+    { type: 'event', event: { seq: 5, type: 'turn/end', data: { turn: 2 } } },
+  ]
+  const result = recentItems({ records }, 1)
+  assert.deepEqual(result.items.map(item => item.kind), ['user', 'work', 'assistant'])
+  assert.equal(result.items[1].title, '步骤 1')
+})
