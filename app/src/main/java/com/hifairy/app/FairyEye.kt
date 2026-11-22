@@ -96,6 +96,8 @@ internal fun FairyEye(modifier: Modifier = Modifier, active: Boolean = false, co
     val breath by motion.animateFloat(1f, .92f, infiniteRepeatable(tween(1500, easing = EaseInOutSine), RepeatMode.Reverse), label = "iris breathing")
     val halo by motion.animateFloat(.55f, .95f, infiniteRepeatable(tween(2300, easing = EaseInOutSine), RepeatMode.Reverse), label = "halo")
     val ring by motion.animateFloat(0f, 1f, infiniteRepeatable(tween(4000, easing = LinearEasing)), label = "pulse ring")
+    val cornerRotation by motion.animateFloat(0f, 360f,
+        infiniteRepeatable(tween(if (active) 1900 else 12000, easing = LinearEasing)), label = "rotating corners")
     val scan by motion.animateFloat(0f, 1f, infiniteRepeatable(tween(1300, easing = LinearEasing)), label = "working scan")
     val completion = remember { Animatable(1f) }
     LaunchedEffect(completionToken) {
@@ -152,9 +154,11 @@ internal fun FairyEye(modifier: Modifier = Modifier, active: Boolean = false, co
         drawCircle(Color(0xFFDCEAFF), 68.8f * unit, center, style = Stroke(1.8f * unit))
         drawCircle(Brush.linearGradient(listOf(Color(0xFF3145D6), Color(0xFF2233B2), Color(0xFF2B3CBC))), 68f * unit, center)
         drawCircle(Color(0xFFF2FBFF), 68f * unit, center, style = Stroke(1.2f * unit))
-        rotate(if (active) ring * 90f else 3f, center) {
+        rotate(cornerRotation, center) {
             circle(Color(0xFF1F2573), 52f)
-            drawRoundRect(Color(0xFF1F2573), Offset(center.x - 43f * unit, center.y - 43f * unit), androidx.compose.ui.geometry.Size(86f * unit, 86f * unit), androidx.compose.ui.geometry.CornerRadius(2f * unit))
+            rotate(3f, center) {
+                drawRoundRect(Color(0xFF1F2573), Offset(center.x - 43f * unit, center.y - 43f * unit), androidx.compose.ui.geometry.Size(86f * unit, 86f * unit), androidx.compose.ui.geometry.CornerRadius(2f * unit))
+            }
         }
         circle(Color(0xFFEEF0F5), 48f)
         circle(Color.White.copy(alpha = .26f), 48f, center)

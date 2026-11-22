@@ -85,6 +85,11 @@ private data class AgentItem(val id: String, val kind: String, val text: String,
 private data class AgentDetail(val text: String = "", val input: String = "", val output: String = "", val terminal: Boolean = false)
 private data class AgentChoice(val id: String, val title: String, val isDefault: Boolean = false)
 
+private fun agentConnectionError(error: Exception): String =
+    if (error is java.net.SocketTimeoutException || error.message?.contains("timeout", ignoreCase = true) == true)
+        "连接超时，请确认电脑服务已启动，并检查设置中的临时通道地址是否更新"
+    else error.message ?: "连接失败"
+
 @Composable
 private fun AgentChoiceIcon(folder: Boolean, modifier: Modifier = Modifier) {
     Canvas(modifier.size(16.dp)) {
@@ -432,7 +437,7 @@ class AgentActivity : ComponentActivity() {
                 try {
                     sessions = withContext(Dispatchers.IO) { api.sessions() }
                     error = ""
-                } catch (e: Exception) { error = e.message ?: "连接失败" }
+                } catch (e: Exception) { error = agentConnectionError(e) }
             }
 
             suspend fun refreshChoices() {
@@ -445,7 +450,7 @@ class AgentActivity : ComponentActivity() {
                     if (freshModes.none { it.id == chosenMode }) chosenMode = freshModes.firstOrNull { it.isDefault }?.id ?: freshModes.firstOrNull()?.id.orEmpty()
                     if (freshWorkspaces.none { it.id == chosenWorkspace }) chosenWorkspace = freshWorkspaces.firstOrNull()?.id.orEmpty()
                     error = ""
-                } catch (e: Exception) { error = e.message ?: "读取电脑模式和工作区失败" }
+                } catch (e: Exception) { error = agentConnectionError(e) }
                 finally { choicesLoading = false }
             }
 
@@ -548,7 +553,7 @@ class AgentActivity : ComponentActivity() {
                                 }
                             }
                         }
-                    } catch (e: Exception) { error = e.message ?: "实时连接中断" }
+                    } catch (e: Exception) { error = agentConnectionError(e) }
                     delay(1500)
                     refreshList()
                 }

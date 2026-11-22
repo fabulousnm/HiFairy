@@ -24,8 +24,16 @@ function Test-Health([string]$url) {
     } catch { return $false }
 }
 
+function Test-AgentBridge([string]$baseUrl) {
+    try {
+        $agentToken = [IO.File]::ReadAllText($agentTokenFile).Trim()
+        $result = Invoke-RestMethod -Uri "$baseUrl/agent/sessions" -Headers @{ Authorization = "Bearer $agentToken" } -TimeoutSec 8
+        return $null -ne $result.items
+    } catch { return $false }
+}
+
 function Find-TunnelUrl {
-    foreach ($log in @($tunnelError, (Join-Path $output 'tunnel-error.log'))) {
+    foreach ($log in @($tunnelError)) {
         if (-not (Test-Path -LiteralPath $log)) { continue }
         $stream = [IO.File]::Open($log, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
         try {
@@ -61,22 +69,29 @@ if (-not $StatusOnly) {
     }
     Write-Host 'Fairy 模型服务已就绪。'
     $url = Find-TunnelUrl
-    if (-not $url -or -not (Test-Health "$url/health")) {
+    if (-not $url -or -not (Test-Health "$url/health") -or -not (Test-AgentBridge $url)) {
         Write-Host '正在启动临时公网通道…'
-        Start-Process -FilePath $cloudflared -ArgumentList @('tunnel', '--url', 'http://127.0.0.1:8765', '--no-autoupdate') `
+        # A stale connector may keep the old log handle open while its health page
+        # still answers. Stop only this project's tunnel before replacing its log.
+        Get-CimInstance Win32_Process | Where-Object {
+            $_.Name -eq 'cloudflared-windows-amd64.exe' -and
+            $_.CommandLine -like '*tunnel --url http://127.0.0.1:8765*'
+        } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+        Start-Sleep -Milliseconds 500
+        Start-Process -FilePath $cloudflared -ArgumentList @('tunnel', '--url', 'http://127.0.0.1:8765', '--protocol', 'http2', '--no-autoupdate') `
             -WorkingDirectory $root -WindowStyle Hidden -RedirectStandardOutput $tunnelLog -RedirectStandardError $tunnelError | Out-Null
         $url = $null
         for ($i = 0; $i -lt 30; $i++) {
             Start-Sleep -Seconds 2
             $candidate = Find-TunnelUrl
-            if ($candidate -and (Test-Health "$candidate/health")) { $url = $candidate; break }
+            if ($candidate -and (Test-Health "$candidate/health") -and (Test-AgentBridge $candidate)) { $url = $candidate; break }
         }
         if (-not $url) { throw "公网通道未在 60 秒内就绪。查看 $tunnelError" }
     }
 } else {
     if (-not (Test-Health $localHealth)) { throw '本地 Fairy 服务尚未启动。' }
     $url = Find-TunnelUrl
-    if (-not $url -or -not (Test-Health "$url/health")) { throw '公网通道尚未就绪。' }
+    if (-not $url -or -not (Test-Health "$url/health") -or -not (Test-AgentBridge $url)) { throw '公网通道尚未就绪。' }
 }
 
 if (-not (Test-Path -LiteralPath $tokenFile)) { throw "令牌文件不存在：$tokenFile" }
