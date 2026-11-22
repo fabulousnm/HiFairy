@@ -48,6 +48,8 @@ import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -104,11 +106,11 @@ private fun AgentChoiceIcon(folder: Boolean, modifier: Modifier = Modifier) {
                 lineTo(size.width * .12f, size.height * .83f)
                 close()
             }
-            drawPath(shape, ThemeTokens.accent, style = stroke)
+            drawPath(shape, YoukaiTokens.accent, style = stroke)
         } else {
-            drawCircle(ThemeTokens.accent, radius = size.minDimension * .39f, style = stroke)
-            drawCircle(ThemeTokens.accent, radius = size.minDimension * .14f)
-            drawLine(ThemeTokens.accent, androidx.compose.ui.geometry.Offset(size.width * .5f, 0f),
+            drawCircle(YoukaiTokens.accent, radius = size.minDimension * .39f, style = stroke)
+            drawCircle(YoukaiTokens.accent, radius = size.minDimension * .14f)
+            drawLine(YoukaiTokens.accent, androidx.compose.ui.geometry.Offset(size.width * .5f, 0f),
                 androidx.compose.ui.geometry.Offset(size.width * .5f, size.height * .12f), strokeWidth = 1.6.dp.toPx())
         }
     }
@@ -131,33 +133,33 @@ private fun AgentChoiceMenu(folder: Boolean, choices: List<AgentChoice>, selecte
     Box {
         Row(Modifier.widthIn(max = 168.dp).height(34.dp)
             .shadow(3.dp, RoundedCornerShape(12.dp))
-            .background(ThemeTokens.raisedCard, RoundedCornerShape(12.dp))
-            .border(1.dp, ThemeTokens.accent.copy(alpha = .35f), RoundedCornerShape(12.dp))
+            .background(YoukaiTokens.raisedCard, RoundedCornerShape(12.dp))
+            .border(1.dp, YoukaiTokens.accent.copy(alpha = .35f), RoundedCornerShape(12.dp))
             .clickable(enabled = choices.isNotEmpty()) { expanded = true }
             .padding(horizontal = 9.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             AgentChoiceIcon(folder)
             Text(selected?.title ?: if (loading) "同步中…" else "暂无选项",
-                color = ThemeTokens.text, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("⌃", color = ThemeTokens.accent, fontSize = 11.sp)
+                color = YoukaiTokens.text, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("⌃", color = YoukaiTokens.accent, fontSize = 11.sp)
         }
         if (expanded) Popup(popupPositionProvider = popupPositioner,
             onDismissRequest = { expanded = false }, properties = PopupProperties(focusable = true)) {
             Column(Modifier.widthIn(min = 185.dp, max = 260.dp).heightIn(max = 350.dp)
                 .shadow(18.dp, RoundedCornerShape(16.dp))
-                .background(ThemeTokens.surface, RoundedCornerShape(16.dp))
-                .border(1.dp, ThemeTokens.accent.copy(alpha = .48f), RoundedCornerShape(16.dp))
+                .background(YoukaiTokens.surface, RoundedCornerShape(16.dp))
+                .border(1.dp, YoukaiTokens.accent.copy(alpha = .48f), RoundedCornerShape(16.dp))
                 .verticalScroll(rememberScrollState()).padding(6.dp)) {
                 choices.forEach { choice ->
                     val active = choice.id == selectedId
                     Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)
-                        .background(if (active) ThemeTokens.accent.copy(alpha = .19f) else Color.Transparent, RoundedCornerShape(10.dp))
+                        .background(if (active) YoukaiTokens.accent.copy(alpha = .19f) else Color.Transparent, RoundedCornerShape(10.dp))
                         .clickable { onSelect(choice.id); expanded = false }
                         .padding(horizontal = 10.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(choice.title, color = if (active) ThemeTokens.accent else ThemeTokens.text,
+                        Text(choice.title, color = if (active) YoukaiTokens.accent else YoukaiTokens.text,
                             fontSize = 12.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
                             modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (active) Text("✓", color = ThemeTokens.accent, fontSize = 12.sp)
+                        if (active) Text("✓", color = YoukaiTokens.accent, fontSize = 12.sp)
                     }
                 }
             }
@@ -167,14 +169,14 @@ private fun AgentChoiceMenu(folder: Boolean, choices: List<AgentChoice>, selecte
 
 @Composable
 private fun AgentTerminalSection(label: String, content: String, onCopy: () -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(top = 7.dp).background(Color(ThemeTokens.codeBackground), RoundedCornerShape(11.dp))
-        .border(1.dp, ThemeTokens.codeCardRim.let { Color(it) }.copy(alpha = .65f), RoundedCornerShape(11.dp))) {
+    Column(Modifier.fillMaxWidth().padding(top = 7.dp).background(Color(YoukaiTokens.codeBackground), RoundedCornerShape(11.dp))
+        .border(1.dp, YoukaiTokens.codeCardRim.let { Color(it) }.copy(alpha = .65f), RoundedCornerShape(11.dp))) {
         Row(Modifier.fillMaxWidth().padding(start = 10.dp, end = 3.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("●  $label", color = ThemeTokens.accent, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
-            MessageAction("copy", "复制$label", onCopy, ThemeTokens.secondary)
+            Text("●  $label", color = YoukaiTokens.accent, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+            MessageAction("copy", "复制$label", onCopy, YoukaiTokens.secondary)
         }
-        Text(content.ifBlank { "（无内容）" }, color = ThemeTokens.text, fontSize = 11.sp, lineHeight = 16.sp,
+        Text(content.ifBlank { "（无内容）" }, color = YoukaiTokens.text, fontSize = 11.sp, lineHeight = 16.sp,
             fontFamily = FontFamily.Monospace, modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)
                 .verticalScroll(rememberScrollState()).padding(start = 10.dp, end = 10.dp, bottom = 10.dp))
     }
@@ -184,14 +186,14 @@ private fun AgentTerminalSection(label: String, content: String, onCopy: () -> U
 private fun AgentRecordCard(item: AgentItem, detail: AgentDetail?, depth: Int = 0, childCount: Int = 0,
                             onClick: () -> Unit, onCopy: (String, String) -> Unit) {
     val tint = when (item.kind) {
-        "tool" -> Color(0xFF83B9CA)
-        "terminal" -> Color(0xFF83B9CA)
-        "work" -> Color(0xFFB7A3DF)
-        "commentary" -> Color(0xFFB7A3DF)
-        else -> ThemeTokens.accent
+        "tool" -> YoukaiTokens.tool
+        "terminal" -> YoukaiTokens.tool
+        "work" -> YoukaiTokens.work
+        "commentary" -> YoukaiTokens.work
+        else -> YoukaiTokens.accent
     }
     Column(Modifier.fillMaxWidth().padding(start = (44 + depth * 14).dp, bottom = 3.dp), horizontalAlignment = Alignment.Start) {
-        Row(Modifier.width(270.dp - (depth * 14).dp).background(ThemeTokens.reasoningBubble, RoundedCornerShape(8.dp))
+        Row(Modifier.width(270.dp - (depth * 14).dp).background(YoukaiTokens.reasoningBubble, RoundedCornerShape(8.dp))
             .border(1.dp, tint.copy(alpha = .24f), RoundedCornerShape(8.dp))
             .clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text((when (item.kind) { "tool" -> "⚙"; "terminal" -> "⌁"; "work" -> "◇"; else -> "◌" }) + "  " + item.title +
@@ -200,7 +202,7 @@ private fun AgentRecordCard(item: AgentItem, detail: AgentDetail?, depth: Int = 
             Text(if (detail == null) "›" else "⌄", color = tint, fontSize = 11.sp)
         }
         if (detail != null) Column(Modifier.width(270.dp - (depth * 14).dp).padding(top = 4.dp)
-            .background(ThemeTokens.surface, RoundedCornerShape(9.dp))
+            .background(YoukaiTokens.surface, RoundedCornerShape(9.dp))
             .border(1.dp, tint.copy(alpha = .25f), RoundedCornerShape(9.dp)).padding(9.dp)) {
             if (item.kind == "tool") {
                 if (detail.terminal) {
@@ -208,31 +210,31 @@ private fun AgentRecordCard(item: AgentItem, detail: AgentDetail?, depth: Int = 
                     AgentTerminalSection("输出", detail.output) { onCopy("工具输出", detail.output) }
                 } else {
                     Text("输入", color = tint, fontSize = 10.sp)
-                    MarkdownMessage(detail.input, Modifier.fillMaxWidth(), textSizeSp = 12f)
+                    MarkdownMessage(detail.input, Modifier.fillMaxWidth(), textSizeSp = 12f, eyeStyle = EyeStyle.YOUKAI)
                     Text("输出", color = tint, fontSize = 10.sp, modifier = Modifier.padding(top = 8.dp))
-                    MarkdownMessage(detail.output, Modifier.fillMaxWidth(), textSizeSp = 12f)
+                    MarkdownMessage(detail.output, Modifier.fillMaxWidth(), textSizeSp = 12f, eyeStyle = EyeStyle.YOUKAI)
                 }
             } else if (item.kind == "terminal") AgentTerminalSection("终端记录", detail.text) { onCopy("终端记录", detail.text) }
-            else MarkdownMessage(detail.text, Modifier.fillMaxWidth(), textSizeSp = 12f)
+            else MarkdownMessage(detail.text, Modifier.fillMaxWidth(), textSizeSp = 12f, eyeStyle = EyeStyle.YOUKAI)
         }
     }
 }
 
 @Composable
 private fun AgentHistoryLoading() {
-    Column(Modifier.background(Brush.verticalGradient(listOf(ThemeTokens.surface, ThemeTokens.reasoningBubble)), RoundedCornerShape(24.dp))
-        .border(1.dp, ThemeTokens.accent.copy(alpha = .22f), RoundedCornerShape(24.dp))
+    Column(Modifier.background(Brush.verticalGradient(listOf(YoukaiTokens.surface, YoukaiTokens.reasoningBubble)), RoundedCornerShape(24.dp))
+        .border(1.dp, YoukaiTokens.accent.copy(alpha = .22f), RoundedCornerShape(24.dp))
         .padding(horizontal = 30.dp, vertical = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Box(Modifier.size(72.dp), contentAlignment = Alignment.Center) {
-            FairyEye(Modifier.size(54.dp))
-            androidx.compose.material3.CircularProgressIndicator(Modifier.fillMaxSize(), color = ThemeTokens.accent,
-                strokeWidth = 2.dp, trackColor = ThemeTokens.accent.copy(alpha = .12f))
+            FairyEye(Modifier.size(54.dp), style = EyeStyle.YOUKAI)
+            androidx.compose.material3.CircularProgressIndicator(Modifier.fillMaxSize(), color = YoukaiTokens.accent,
+                strokeWidth = 2.dp, trackColor = YoukaiTokens.accent.copy(alpha = .12f))
         }
         Spacer(Modifier.height(16.dp))
-        Text("正在接入会话", color = ThemeTokens.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-        Text("读取最近 15 轮问答", color = ThemeTokens.secondary, fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
-        androidx.compose.material3.LinearProgressIndicator(Modifier.width(150.dp).height(3.dp), color = ThemeTokens.accent,
-            trackColor = ThemeTokens.accent.copy(alpha = .13f))
+        Text("正在接入会话", color = YoukaiTokens.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text("读取最近 15 轮问答", color = YoukaiTokens.secondary, fontSize = 10.sp, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
+        androidx.compose.material3.LinearProgressIndicator(Modifier.width(150.dp).height(3.dp), color = YoukaiTokens.accent,
+            trackColor = YoukaiTokens.accent.copy(alpha = .13f))
     }
 }
 
@@ -250,9 +252,9 @@ private fun AgentHoldEye(size: androidx.compose.ui.unit.Dp, modifier: Modifier =
                 if (released == null) onSwitch()
                 progress.animateTo(0f, tween(180))
             })
-        }, active = active)
+        }, active = active, style = EyeStyle.YOUKAI)
         if (progress.value > .001f) Canvas(Modifier.matchParentSize()) {
-            drawArc(ThemeTokens.accent, -90f, 360f * progress.value, false,
+            drawArc(YoukaiTokens.accent, -90f, 360f * progress.value, false,
                 style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round))
         }
     }
@@ -372,6 +374,8 @@ class AgentActivity : ComponentActivity() {
         val api = AgentConnection(settings)
         setContent {
             val scope = rememberCoroutineScope()
+            var modeSwitchTrigger by remember { mutableIntStateOf(0) }
+            var modeSwitchOrigin by remember { mutableStateOf(Offset.Zero) }
             var tokenReady by remember { mutableStateOf(settings.agentToken().isNotBlank()) }
             var listOpen by remember { mutableStateOf(false) }
             var settingsOpenedFromDrawer by remember { mutableStateOf(false) }
@@ -565,7 +569,7 @@ class AgentActivity : ComponentActivity() {
                 drawerProgress.snapTo(target)
             }
 
-            BoxWithConstraints(Modifier.fillMaxSize().background(ThemeTokens.background).draggable(
+            BoxWithConstraints(Modifier.fillMaxSize().background(YoukaiTokens.background).draggable(
                 state = rememberDraggableState { delta -> dragProgress = (dragProgress + delta / drawerWidthPx).coerceIn(0f, 1f) },
                 orientation = Orientation.Horizontal,
                 onDragStarted = { drawerProgress.stop(); dragProgress = drawerProgress.value.coerceIn(0f, 1f); dragStartedOpen = dragProgress >= .5f; draggingDrawer = true },
@@ -593,20 +597,20 @@ class AgentActivity : ComponentActivity() {
                 shadowElevation = 14.dp.toPx() * progress
                 shape = RoundedCornerShape(20.dp)
                 clip = progress > 0f
-            }.fillMaxSize().background(ThemeTokens.background).padding(20.dp)) {
+            }.fillMaxSize().background(YoukaiTokens.background).padding(20.dp)) {
                 Box(Modifier.fillMaxWidth().height(44.dp)) {
-                    Box(Modifier.align(Alignment.CenterStart)) { MessageAction("menu", "打开历史对话", { listOpen = true }, ThemeTokens.accent) }
-                    Text("H.D.D Ⅲ · AGENT", color = ThemeTokens.text, fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                    Box(Modifier.align(Alignment.CenterStart)) { MessageAction("menu", "打开历史对话", { listOpen = true }, YoukaiTokens.accent) }
+                    Text("H.D.D Ⅲ · AGENT", color = YoukaiTokens.text, fontSize = 16.sp, fontWeight = FontWeight.Bold,
                         modifier = Modifier.align(Alignment.Center))
                     Row(Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically) {
                         MessageAction(if (voiceAutoPlay) "speaker" else "mute", "切换自动播放", {
                             voiceAutoPlay = !voiceAutoPlay
                             settings.voiceAutoPlay = voiceAutoPlay
                             if (!voiceAutoPlay) speechPlayer.stop()
-                        }, ThemeTokens.accent)
+                        }, YoukaiTokens.accent)
                         MessageAction("plus", "新任务", {
                             newTask()
-                        }, ThemeTokens.accent)
+                        }, YoukaiTokens.accent)
                     }
                 }
                 BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
@@ -614,17 +618,22 @@ class AgentActivity : ComponentActivity() {
                     val eyeSize by androidx.compose.animation.core.animateDpAsState(if (hasConversation) 54.dp else 150.dp, tween(550), label = "agent eye size")
                     val eyeX by androidx.compose.animation.core.animateDpAsState(if (hasConversation) 0.dp else (maxWidth - eyeSize) / 2, tween(550), label = "agent eye x")
                     val eyeY by androidx.compose.animation.core.animateDpAsState(if (hasConversation) 28.dp else (maxHeight - eyeSize) / 2, tween(550), label = "agent eye y")
-                    if (tokenReady) AgentHoldEye(eyeSize, Modifier.offset(eyeX, eyeY), pendingPrompt.isNotBlank()) { finish() }
+                    if (tokenReady) AgentHoldEye(eyeSize, Modifier.offset(eyeX, eyeY)
+                        .onGloballyPositioned { coordinates ->
+                            modeSwitchOrigin = coordinates.positionInRoot() + Offset(coordinates.size.width / 2f, coordinates.size.height / 2f)
+                        }, pendingPrompt.isNotBlank()) { if (modeSwitchTrigger == 0) modeSwitchTrigger++ }
                     if (!tokenReady) {
                         Column(Modifier.align(Alignment.Center)) {
-                            Text("请在隐私安全中设置电脑 Agent 访问令牌", color = ThemeTokens.text)
+                            Text("请在隐私安全中设置电脑 Agent 访问令牌", color = YoukaiTokens.text)
                             Button(onClick = { privacyLauncher.launch(android.content.Intent(this@AgentActivity, MainActivity::class.java).putExtra("open_settings_only", true)) }) { Text("打开设置") }
                         }
                     } else if (selected.isBlank()) {
-                        Text(greetingForHour(LocalTime.now().hour), color = ThemeTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold,
+                        Text(greetingForHour(LocalTime.now().hour), color = YoukaiTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.align(Alignment.Center).offset(y = eyeSize / 2 + 42.dp))
                     } else {
-                        FairyOnlineStatus(pendingPrompt.isNotBlank(), Modifier.align(Alignment.TopStart).offset(x = 70.dp, y = 46.dp))
+                        Text(if (pendingPrompt.isNotBlank()) "●  YOUKAI // WORKING" else "●  YOUKAI // ONLINE",
+                            color = YoukaiTokens.accent, fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.align(Alignment.TopStart).offset(x = 70.dp, y = 46.dp))
                         val scroll = rememberScrollState()
                         var initialScrollPending by remember(selected) { mutableStateOf(true) }
                         LaunchedEffect(selected, loadedSession, items.size) {
@@ -650,7 +659,7 @@ class AgentActivity : ComponentActivity() {
                                         onReplay = {
                                             if (playingIndex == index) { speechPlayer.stop(); playingIndex = -1 }
                                             else if (speechPlayer.play(settings.voiceEndpoint, settings.voiceToken(), item.text, index.toLong())) playingIndex = index
-                                        }, assistantName = "DSH", showActions = item.kind == "assistant")
+                                        }, assistantName = "YOUKAI", showActions = item.kind == "assistant", eyeStyle = EyeStyle.YOUKAI)
                                 } else if (item.parentId.isBlank()) {
                                     val children = if (item.kind == "work") items.filter { it.parentId == item.id } else emptyList()
                                     AgentRecordCard(item, expanded[item.id], childCount = children.size,
@@ -666,7 +675,7 @@ class AgentActivity : ComponentActivity() {
                                 }
                             }
                             if (pendingPrompt.isNotBlank() && items.lastOrNull { it.kind == "user" }?.text != pendingPrompt)
-                                ChatBubble(ChatMessage("user", pendingPrompt), settings.displayName, settings.avatar, false, false, false, false, true, {}, {}, {}, {}, {})
+                                ChatBubble(ChatMessage("user", pendingPrompt), settings.displayName, settings.avatar, false, false, false, false, true, {}, {}, {}, {}, {}, eyeStyle = EyeStyle.YOUKAI)
                             if (liveReasoning.isNotBlank()) AgentRecordCard(
                                 AgentItem("live-reasoning", "reasoning", "", "思考进行中", "", "", false),
                                 if (expanded.containsKey("live-reasoning")) AgentDetail(text = liveReasoning) else null,
@@ -674,12 +683,12 @@ class AgentActivity : ComponentActivity() {
                                     if (expanded.containsKey("live-reasoning")) expanded.remove("live-reasoning") else expanded["live-reasoning"] = AgentDetail(text = liveReasoning)
                                 }, onCopy = { _, _ -> })
                             if (pendingPrompt.isNotBlank() || liveText.isNotBlank() || liveReasoning.isNotBlank())
-                                ChatBubble(ChatMessage("assistant", liveText), settings.displayName, settings.avatar, false, false, false, false, true, {}, {}, {}, {}, {}, showActions = false, assistantName = "DSH")
+                                ChatBubble(ChatMessage("assistant", liveText), settings.displayName, settings.avatar, false, false, false, false, true, {}, {}, {}, {}, {}, showActions = false, assistantName = "YOUKAI", eyeStyle = EyeStyle.YOUKAI)
                         }
                         if (loadingHistory && loadedSession != selected) Box(Modifier.align(Alignment.Center)) { AgentHistoryLoading() }
                     }
                 }
-                if (error.isNotBlank()) Text(error, color = ThemeTokens.accent, fontSize = 12.sp)
+                if (error.isNotBlank()) Text(error, color = YoukaiTokens.accent, fontSize = 12.sp)
                 if (tokenReady && selected.isBlank()) Row(Modifier.fillMaxWidth().padding(start = 4.dp, bottom = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     AgentChoiceMenu(false, modes, chosenMode, choicesLoading) { chosenMode = it }
@@ -687,14 +696,14 @@ class AgentActivity : ComponentActivity() {
                 }
                 if (tokenReady && voiceMode) {
                     var dragY by remember { mutableFloatStateOf(0f) }
-                    Row(Modifier.fillMaxWidth().background(ThemeTokens.surface, RoundedCornerShape(18.dp))
-                        .border(1.dp, ThemeTokens.pressedCardRim, RoundedCornerShape(18.dp)).padding(8.dp),
+                    Row(Modifier.fillMaxWidth().background(YoukaiTokens.surface, RoundedCornerShape(18.dp))
+                        .border(1.dp, YoukaiTokens.pressedCardRim, RoundedCornerShape(18.dp)).padding(8.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         MessageAction("keyboard", "切换文字输入", {
                             if (voiceHolding) voiceInput.finish(true)
                             voiceHolding = false; voiceMode = false
-                        }, ThemeTokens.accent)
-                        Box(Modifier.weight(1f).height(48.dp).background(ThemeTokens.raisedCard, RoundedCornerShape(13.dp))
+                        }, YoukaiTokens.accent)
+                        Box(Modifier.weight(1f).height(48.dp).background(YoukaiTokens.raisedCard, RoundedCornerShape(13.dp))
                             .pointerInput(voiceInput.ready) {
                                 detectDragGesturesAfterLongPress(
                                     onDragStart = {
@@ -709,64 +718,64 @@ class AgentActivity : ComponentActivity() {
                                     onDragCancel = { if (voiceHolding) voiceInput.finish(true); voiceHolding = false; voiceCancel = false }
                                 )
                             }, contentAlignment = Alignment.Center) {
-                            Text(if (voiceInput.ready) "按住说话" else "正在准备语音…", color = ThemeTokens.text, fontSize = 16.sp)
+                            Text(if (voiceInput.ready) "按住说话" else "正在准备语音…", color = YoukaiTokens.text, fontSize = 16.sp)
                         }
                     }
                 } else if (tokenReady) {
                     val composerShape = RoundedCornerShape(18.dp)
                     Row(Modifier.fillMaxWidth().shadow(if (draft.isNotBlank()) 9.dp else 4.dp, composerShape)
-                        .background(ThemeTokens.surface, composerShape)
-                        .border(1.dp, if (draft.isNotBlank()) Color(0xFF5775B5) else Color(0xFF293653), composerShape)
+                        .background(YoukaiTokens.surface, composerShape)
+                        .border(1.dp, if (draft.isNotBlank()) YoukaiTokens.accent.copy(alpha = .7f) else YoukaiTokens.pressedCardRim, composerShape)
                         .padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         MessageAction("mic", "切换语音输入", {
                             voiceMode = true
                             if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) voiceInput.prepare()
                             else requestMicrophone.launch(Manifest.permission.RECORD_AUDIO)
-                        }, ThemeTokens.accent)
+                        }, YoukaiTokens.accent)
                         TextField(draft, { draft = it }, modifier = Modifier.weight(1f),
-                            placeholder = { Text("向 Fairy 提问…", color = ThemeTokens.secondary) },
-                            colors = TextFieldDefaults.colors(focusedTextColor = ThemeTokens.text, unfocusedTextColor = ThemeTokens.text,
-                                cursorColor = ThemeTokens.accent, focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
+                            placeholder = { Text("向 Fairy 提问…", color = YoukaiTokens.secondary) },
+                            colors = TextFieldDefaults.colors(focusedTextColor = YoukaiTokens.text, unfocusedTextColor = YoukaiTokens.text,
+                                cursorColor = YoukaiTokens.accent, focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
                                 focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
                         MessageAction("send", "发送消息", {
                             submit(draft)
-                        }, if (busy || draft.isBlank()) ThemeTokens.secondary.copy(alpha = .6f) else ThemeTokens.accent)
+                        }, if (busy || draft.isBlank()) YoukaiTokens.secondary.copy(alpha = .6f) else YoukaiTokens.accent)
                     }
                 }
             }
             if (progress > .001f) Box(Modifier.align(Alignment.CenterEnd).width(maxWidth - drawerWidth * progress).fillMaxHeight()
-                .background(Brush.horizontalGradient(listOf(Color.Transparent, ThemeTokens.drawerVeil.copy(alpha = .32f * progress))))
+                .background(Brush.horizontalGradient(listOf(Color.Transparent, YoukaiTokens.drawerVeil.copy(alpha = .32f * progress))))
                 .clickable(onClickLabel = "收起历史对话") { listOpen = false; settleVersion++ })
             if (progress > .001f || listOpen) {
                 val drawerShape = RoundedCornerShape(topEnd = 20.dp, bottomEnd = 20.dp)
                 Column(Modifier.offset(x = -drawerWidth * (1f - progress)).fillMaxHeight().width(drawerWidth)
-                    .shadow(24.dp, drawerShape).background(ThemeTokens.surface, drawerShape)
-                    .border(1.dp, Color(0xFF384878), drawerShape).padding(horizontal = 16.dp, vertical = 24.dp)) {
-                    Text("历史对话", color = ThemeTokens.text, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                    Text("＋  新任务", color = ThemeTokens.accent, modifier = Modifier.fillMaxWidth().clickable {
+                    .shadow(24.dp, drawerShape).background(YoukaiTokens.surface, drawerShape)
+                    .border(1.dp, YoukaiTokens.pressedCardRim, drawerShape).padding(horizontal = 16.dp, vertical = 24.dp)) {
+                    Text("历史对话", color = YoukaiTokens.text, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                    Text("＋  新任务", color = YoukaiTokens.accent, modifier = Modifier.fillMaxWidth().clickable {
                         newTask()
                     }.padding(vertical = 22.dp))
                     Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                         sessions.forEach { session ->
                             HistorySessionSurface(session.id == selected) {
-                                Text(session.title, color = if (session.id == selected) ThemeTokens.accent else ThemeTokens.text,
+                                Text(session.title, color = if (session.id == selected) YoukaiTokens.accent else YoukaiTokens.text,
                                     maxLines = 2, modifier = Modifier.fillMaxWidth().clickable {
                                         speechPlayer.stop(); items = emptyList(); loadedSession = ""; expanded.clear(); selected = session.id; listOpen = false; pendingPrompt = ""; liveText = ""; liveReasoning = ""
                                     }.padding(vertical = 8.dp))
                             }
                         }
                     }
-                    Text("设置  ›", color = ThemeTokens.text, modifier = Modifier.fillMaxWidth().clickable {
+                    Text("设置  ›", color = YoukaiTokens.text, modifier = Modifier.fillMaxWidth().clickable {
                         settingsOpenedFromDrawer = true
                         privacyLauncher.launch(android.content.Intent(this@AgentActivity, MainActivity::class.java).putExtra("open_settings_only", true))
                     }.padding(vertical = 16.dp))
                 }
             }
             if (voiceHolding && progress < .01f) {
-                val glow by animateColorAsState(if (voiceCancel) ThemeTokens.voiceCancelGlow else ThemeTokens.voiceGlow, tween(180), label = "agent voice glow")
+                val glow by animateColorAsState(if (voiceCancel) YoukaiTokens.voiceCancelGlow else YoukaiTokens.voiceGlow, tween(180), label = "agent voice glow")
                 val level by animateFloatAsState(voiceLevel, tween(100), label = "agent voice level")
                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(330.dp)
-                    .background(Brush.verticalGradient(0f to Color.Transparent, .24f to ThemeTokens.voiceShade.copy(alpha = .94f), .56f to glow.copy(alpha = .97f), 1f to glow))) {
+                    .background(Brush.verticalGradient(0f to Color.Transparent, .24f to YoukaiTokens.voiceShade.copy(alpha = .94f), .56f to glow.copy(alpha = .97f), 1f to glow))) {
                     Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(bottom = 88.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(if (voiceCancel) "松手取消" else "松手发送 · 上滑取消", color = Color.White, fontSize = 16.sp)
                         Spacer(Modifier.height(56.dp))
@@ -777,12 +786,17 @@ class AgentActivity : ComponentActivity() {
                                 val profile = .35f + .65f * kotlin.math.abs(kotlin.math.sin(index * .57f))
                                 val height = size.height * (.15f + level * .75f * profile)
                                 val x = index * gap
-                                drawLine(if (voiceCancel) Color(0xFFFF8995) else ThemeTokens.text.copy(alpha = .9f),
+                                drawLine(if (voiceCancel) Color(0xFFFF8995) else YoukaiTokens.text.copy(alpha = .9f),
                                     Offset(x, (size.height - height) / 2), Offset(x, (size.height + height) / 2), 2.dp.toPx(), cap = StrokeCap.Round)
                             }
                         }
                     }
                 }
+            }
+            ModeRipple(modeSwitchTrigger, modeSwitchOrigin, ThemeTokens.background) {
+                finish()
+                @Suppress("DEPRECATION")
+                overridePendingTransition(0, 0)
             }
             }
         }

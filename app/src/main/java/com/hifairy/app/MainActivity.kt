@@ -76,6 +76,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.painterResource
@@ -114,6 +116,7 @@ private data class CodeSnippet(val language: String, val code: String)
 internal const val AGENT_MODE_HOLD_MS = 2000L
 
 private class CodeCardTextView(context: Context) : TextView(context) {
+    var eyeStyle: EyeStyle = EyeStyle.FAIRY
     var codeRanges: List<IntRange> = emptyList()
         set(value) { field = value; invalidate() }
 
@@ -125,14 +128,16 @@ private class CodeCardTextView(context: Context) : TextView(context) {
                 val top = textLayout.getLineTop(textLayout.getLineForOffset(range.first)) - 3f * density
                 val bottom = textLayout.getLineBottom(textLayout.getLineForOffset(range.last)) + 5f * density
                 val shadow = GradientDrawable().apply {
-                    setColor(ThemeTokens.codeCardShadow)
+                    setColor(if (eyeStyle == EyeStyle.YOUKAI) YoukaiTokens.codeCardShadow else ThemeTokens.codeCardShadow)
                     cornerRadius = 14f * density
                     setBounds(0, (top + 3f * density).toInt(), width, (bottom + 3f * density).toInt())
                 }
                 shadow.draw(canvas)
-                GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(ThemeTokens.codeCardTop, ThemeTokens.codeCardBottom)).apply {
+                GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(
+                    if (eyeStyle == EyeStyle.YOUKAI) YoukaiTokens.codeCardTop else ThemeTokens.codeCardTop,
+                    if (eyeStyle == EyeStyle.YOUKAI) YoukaiTokens.codeCardBottom else ThemeTokens.codeCardBottom)).apply {
                     cornerRadius = 14f * density
-                    setStroke((density).toInt().coerceAtLeast(1), ThemeTokens.codeCardRim)
+                    setStroke((density).toInt().coerceAtLeast(1), if (eyeStyle == EyeStyle.YOUKAI) YoukaiTokens.codeCardRim else ThemeTokens.codeCardRim)
                     setBounds(0, top.toInt(), width, bottom.toInt())
                 }.draw(canvas)
             }
@@ -224,10 +229,10 @@ private fun normalizeMath(markdown: String): String = markdown
     .replace("\\(", "$$").replace("\\)", "$$")
 
 @Composable
-internal fun MarkdownMessage(message: String, modifier: Modifier = Modifier, copyCode: Boolean = false, textSizeSp: Float = 16f) {
+internal fun MarkdownMessage(message: String, modifier: Modifier = Modifier, copyCode: Boolean = false, textSizeSp: Float = 16f, eyeStyle: EyeStyle = EyeStyle.FAIRY) {
     val context = LocalContext.current
     val hasCodeBlock = remember(message) { codeSnippets(message).isNotEmpty() }
-    val markwon = remember(context) {
+    val markwon = remember(context, eyeStyle) {
         Markwon.builder(context)
             .usePlugin(MarkwonInlineParserPlugin.create())
             .usePlugin(JLatexMathPlugin.create(44f) { it.inlinesEnabled(true) })
@@ -239,7 +244,7 @@ internal fun MarkdownMessage(message: String, modifier: Modifier = Modifier, cop
                 override fun configureTheme(builder: MarkwonTheme.Builder) {
                     builder.codeBlockBackgroundColor(android.graphics.Color.TRANSPARENT)
                         .codeBlockTextColor(android.graphics.Color.rgb(232, 243, 255))
-                        .codeBackgroundColor(ThemeTokens.codeBackground)
+                        .codeBackgroundColor(if (eyeStyle == EyeStyle.YOUKAI) YoukaiTokens.codeBackground else ThemeTokens.codeBackground)
                 }
             })
             .build()
@@ -250,11 +255,13 @@ internal fun MarkdownMessage(message: String, modifier: Modifier = Modifier, cop
                 tag = "markdown-text"
                 setTextColor(android.graphics.Color.rgb(232, 243, 255)); textSize = textSizeSp
                 setLineSpacing(4f, 1f); setTextIsSelectable(true)
-                setLinkTextColor(android.graphics.Color.rgb(143, 180, 255))
+                setLinkTextColor(if (eyeStyle == EyeStyle.YOUKAI) android.graphics.Color.rgb(245, 138, 192) else android.graphics.Color.rgb(143, 180, 255))
+                this.eyeStyle = eyeStyle
             }, FrameLayout.LayoutParams(if (hasCodeBlock) -1 else -2, -2))
         }
     }, update = { container ->
         val textView = container.findViewWithTag<CodeCardTextView>("markdown-text")
+        textView.eyeStyle = eyeStyle
         textView.textSize = textSizeSp
         val targetWidth = if (hasCodeBlock) -1 else -2
         if (textView.layoutParams.width != targetWidth) {
@@ -283,7 +290,7 @@ internal fun MarkdownMessage(message: String, modifier: Modifier = Modifier, cop
                 val buttonSize = (32 * density).toInt()
                 val button = ImageButton(container.context).apply {
                     setImageResource(R.drawable.ic_copy_code)
-                    setColorFilter(android.graphics.Color.rgb(143, 180, 255))
+                    setColorFilter(if (eyeStyle == EyeStyle.YOUKAI) android.graphics.Color.rgb(245, 138, 192) else android.graphics.Color.rgb(143, 180, 255))
                     background = null
                     contentDescription = "复制第 ${index + 1} 段代码"
                     setOnClickListener {
@@ -301,14 +308,18 @@ internal fun MarkdownMessage(message: String, modifier: Modifier = Modifier, cop
 }
 
 @Composable
-private fun ChatAvatar(role: String, avatar: String, modifier: Modifier = Modifier) {
+private fun ChatAvatar(role: String, avatar: String, modifier: Modifier = Modifier, eyeStyle: EyeStyle = EyeStyle.FAIRY) {
     val context = LocalContext.current
     val resource = if (role == "assistant") R.drawable.fairy_eye else if (avatar == "zhe") R.drawable.avatar_zhe else R.drawable.avatar_ling
     val custom = remember(avatar) {
         if (role == "user" && avatar == "custom") BitmapFactory.decodeFile(File(context.filesDir, "custom-avatar.jpg").absolutePath)?.asImageBitmap() else null
     }
     Box(modifier.aspectRatio(1f).shadow(if (role == "assistant") 5.dp else 2.dp, CircleShape)
-        .clip(CircleShape).border(1.dp, if (role == "assistant") ThemeTokens.accent.copy(alpha = .7f) else ThemeTokens.secondary.copy(alpha = .35f), CircleShape), contentAlignment = Alignment.Center) {
+        .clip(CircleShape).border(1.dp, if (role == "assistant") (if (eyeStyle == EyeStyle.YOUKAI) YoukaiTokens.accent else ThemeTokens.accent).copy(alpha = .7f) else ThemeTokens.secondary.copy(alpha = .35f), CircleShape), contentAlignment = Alignment.Center) {
+        if (role == "assistant" && eyeStyle == EyeStyle.YOUKAI) {
+            FairyEye(Modifier.fillMaxSize(), style = EyeStyle.YOUKAI)
+            return@Box
+        }
         val imageModifier = Modifier.fillMaxSize().graphicsLayer {
             if (role == "assistant") {
                 scaleX = ThemeDimensions.fairyAvatarScale
@@ -460,16 +471,16 @@ private fun EyeBalanceCard(balance: AccountBalance?, loading: Boolean, now: Inst
 }
 
 @Composable
-internal fun ChatBubble(message: ChatMessage, displayName: String, avatar: String, showRegenerate: Boolean, showContinue: Boolean, showEdit: Boolean, playing: Boolean, animateEntrance: Boolean, onCopy: () -> Unit, onEdit: () -> Unit, onRegenerate: () -> Unit, onContinue: () -> Unit, onReplay: () -> Unit, showActions: Boolean = true, assistantName: String = "Fairy") {
+internal fun ChatBubble(message: ChatMessage, displayName: String, avatar: String, showRegenerate: Boolean, showContinue: Boolean, showEdit: Boolean, playing: Boolean, animateEntrance: Boolean, onCopy: () -> Unit, onEdit: () -> Unit, onRegenerate: () -> Unit, onContinue: () -> Unit, onReplay: () -> Unit, showActions: Boolean = true, assistantName: String = "Fairy", eyeStyle: EyeStyle = EyeStyle.FAIRY) {
     val isUser = message.role == "user"
     val context = LocalContext.current
     var reasoningExpanded by remember { mutableStateOf(false) }
     val entrance = remember { Animatable(if (animateEntrance) 0f else 1f) }
     LaunchedEffect(Unit) { if (animateEntrance) entrance.animateTo(1f, tween(ThemeMotion.messageMs, easing = FastOutSlowInEasing)) }
     Row(Modifier.fillMaxWidth().padding(vertical = 9.dp).graphicsLayer { alpha = entrance.value; translationY = (1f - entrance.value) * 12.dp.toPx() }, horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Top) {
-        if (!isUser) ChatAvatar("assistant", avatar, Modifier.size(36.dp))
+        if (!isUser) ChatAvatar("assistant", avatar, Modifier.size(36.dp), eyeStyle)
         Column(Modifier.widthIn(max = 300.dp).padding(horizontal = 8.dp), horizontalAlignment = if (isUser) Alignment.End else Alignment.Start) {
-            Text(if (isUser) displayName else assistantName, color = ThemeTokens.secondary, fontSize = 11.sp, fontFamily = TypeTokens.terminalFont, modifier = Modifier.padding(bottom = 5.dp))
+            Text(if (isUser) displayName else assistantName, color = if (eyeStyle == EyeStyle.YOUKAI) YoukaiTokens.secondary else ThemeTokens.secondary, fontSize = 11.sp, fontFamily = TypeTokens.terminalFont, modifier = Modifier.padding(bottom = 5.dp))
             if (!isUser && message.reasoning.isNotEmpty()) {
                 val chevronAngle by animateFloatAsState(if (reasoningExpanded) 90f else 0f, tween(220), label = "reasoning chevron")
                 val reasoningRim by animateColorAsState(if (reasoningExpanded) Color(0xFF3C6575) else Color(0xFF294451), tween(220), label = "reasoning rim")
@@ -487,15 +498,15 @@ internal fun ChatBubble(message: ChatMessage, displayName: String, avatar: Strin
             if (message.content.isNotBlank() || message.reasoning.isBlank()) {
                 val bubbleShape = if (isUser) RoundedCornerShape(topStart = 16.dp, topEnd = 5.dp, bottomStart = 16.dp, bottomEnd = 16.dp)
                     else RoundedCornerShape(topStart = 5.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 16.dp)
-                val bubbleRim = if (isUser) Color(0xFF43568A) else Color(0xFF2E3853)
+                val bubbleRim = if (eyeStyle == EyeStyle.YOUKAI) YoukaiTokens.accent.copy(alpha = if (isUser) .45f else .22f) else if (isUser) Color(0xFF43568A) else Color(0xFF2E3853)
                 Box(Modifier.shadow(5.dp, bubbleShape, ambientColor = Color(0x99010310), spotColor = Color(0x77010310))
-                    .background(if (isUser) ThemeTokens.userBubble else ThemeTokens.fairyBubble, bubbleShape)
+                    .background(if (eyeStyle == EyeStyle.YOUKAI) (if (isUser) YoukaiTokens.userBubble else YoukaiTokens.fairyBubble) else (if (isUser) ThemeTokens.userBubble else ThemeTokens.fairyBubble), bubbleShape)
                     .border(1.dp, bubbleRim, bubbleShape).padding(horizontal = 14.dp, vertical = 11.dp)) {
                     if (!isUser && message.content.isBlank()) ThinkingIndicator()
                     else {
                         val body = message.content
                         val hasCode = remember(body) { codeSnippets(body).isNotEmpty() }
-                        MarkdownMessage(body, if (hasCode) Modifier.fillMaxWidth() else Modifier, copyCode = !isUser)
+                        MarkdownMessage(body, if (hasCode) Modifier.fillMaxWidth() else Modifier, copyCode = !isUser, eyeStyle = eyeStyle)
                     }
                 }
             }
@@ -515,8 +526,8 @@ internal fun ChatBubble(message: ChatMessage, displayName: String, avatar: Strin
                 }
             }
             if (!isUser && showActions && (message.content.isNotBlank() || showContinue)) Row(verticalAlignment = Alignment.CenterVertically) {
-                if (message.content.isNotBlank()) MessageAction("copy", "复制回答", onCopy)
-                if (message.content.isNotBlank()) MessageAction(if (playing) "mute" else "speaker", if (playing) "停止播放" else "重听回答", onReplay, if (playing) ThemeTokens.accent else ThemeTokens.secondary)
+                if (message.content.isNotBlank()) MessageAction("copy", "复制回答", onCopy, if (eyeStyle == EyeStyle.YOUKAI) YoukaiTokens.secondary else ThemeTokens.secondary)
+                if (message.content.isNotBlank()) MessageAction(if (playing) "mute" else "speaker", if (playing) "停止播放" else "重听回答", onReplay, if (eyeStyle == EyeStyle.YOUKAI) (if (playing) YoukaiTokens.accent else YoukaiTokens.secondary) else (if (playing) ThemeTokens.accent else ThemeTokens.secondary))
                 if (showRegenerate) MessageAction("retry", "重新生成回答", onRegenerate)
                 if (showContinue) Row(Modifier.clickable(onClickLabel = "继续生成回答", onClick = onContinue).padding(horizontal = 6.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
                     ActionGlyph("continue", ThemeTokens.accent)
@@ -600,6 +611,7 @@ class MainActivity : ComponentActivity() {
     private var voiceEndpointDraft by mutableStateOf("")
     private lateinit var voiceInput: ParaformerVoiceInput
     private var page by mutableStateOf("chat")
+    private var modeSwitchTrigger by mutableIntStateOf(0)
     private var settingsFromHistory = false
     private var settingsOnly = false
     private var chatOpenedFromHistory = false
@@ -725,6 +737,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             val context = LocalContext.current
             val scope = rememberCoroutineScope()
+            var modeSwitchOrigin by remember { mutableStateOf(Offset.Zero) }
             LaunchedEffect(page, modelsRefresh) {
                 if (page == "settings") {
                     val key = withContext(Dispatchers.IO) { secureSettings.apiKey() }
@@ -928,6 +941,9 @@ class MainActivity : ComponentActivity() {
                             var eyeHoldTriggered by remember { mutableStateOf(false) }
                             val eyeHoldProgress = remember { androidx.compose.animation.core.Animatable(0f) }
                             FairyEye(Modifier.offset(eyeX, eyeY).size(eyeSize)
+                                .onGloballyPositioned { coordinates ->
+                                    modeSwitchOrigin = coordinates.positionInRoot() + Offset(coordinates.size.width / 2f, coordinates.size.height / 2f)
+                                }
                                 .pointerInput(eyeInteractive, hasConversation) {
                                     if (eyeInteractive) detectTapGestures(
                                         onPress = {
@@ -940,7 +956,7 @@ class MainActivity : ComponentActivity() {
                                                     eyeHoldTriggered = true
                                                     eyeCardOpen = false
                                                     stopBalanceVoice()
-                                                    startActivity(Intent(this@MainActivity, AgentActivity::class.java))
+                                                    if (modeSwitchTrigger == 0) modeSwitchTrigger++
                                                 }
                                                 eyeHoldProgress.animateTo(0f, tween(180))
                                             }
@@ -1226,12 +1242,18 @@ class MainActivity : ComponentActivity() {
                 }
             }
             Box(Modifier.fillMaxSize().alpha(curtain.value).background(Color.Black))
+            ModeRipple(modeSwitchTrigger, modeSwitchOrigin, YoukaiTokens.background) {
+                startActivity(Intent(this@MainActivity, AgentActivity::class.java))
+                @Suppress("DEPRECATION")
+                overridePendingTransition(0, 0)
+            }
             }
         }
     }
 
     override fun onResume() {
         super.onResume()
+        modeSwitchTrigger = 0
         greetingHour = LocalTime.now().hour
         if (::secureSettings.isInitialized && page == "settings") modelsRefresh++
     }
