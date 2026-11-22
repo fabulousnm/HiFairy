@@ -26,6 +26,13 @@
 
 后续待完成：Agent 专属主题色、中心扩散切换动画；电脑 Host 的模式选择、权限选择和审批；任务停止、工具事件细节、Agent 历史会话的重命名/删除能力；长会话与断线中的增量续传。普通 Chat 的“接入绳网”不放进 Agent 页。
 
+### 异网可靠性待办（2026-11-22，暂不实施）
+
+- [ ] 将当前随机域名的 Quick Tunnel 更换为稳定入口。优先评估自有域名下的 Cloudflare 正式 Tunnel；若暂无域名，先在 nova 14 的卓易通环境真机验证 Tailscale 客户端和 VPN 能否稳定连接，再决定是否使用私有组网。两种路线择一，不同时维护两套入口。
+- [ ] 电脑端配置开机自启和故障恢复：语音/Agent 网关、DSH Host 桥接及所选通道均须在进程退出或网络恢复后自动重启，并用已认证的 Agent 接口做健康检查；验证重启电脑、断网重连和长时间空闲后的恢复。
+- [ ] 若需要电脑睡眠或关机后从手机恢复，再单独设计远程唤醒；在电脑断电、断网且无带外唤醒通道时，手机无法独自恢复本地推理。
+- [ ] 切换正式入口前复核鉴权、密钥存储、HTTPS/WebSocket 和真机异网首包延迟；完成后从手机配置及文档清除过期临时地址。
+
 公网流式复核：本机 SSE 可逐段返回，但沿用的 Cloudflare Quick Tunnel 对 SSE 连接超时；[Cloudflare 官方 Quick Tunnel 限制](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/)明确说明不支持 SSE。因此 Agent 实时通道改用同一域名的 `wss://…/agent/live/{sessionId}`，首条 WebSocket 消息发送独立 Agent 令牌，电脑 FastAPI 在本机读取 DSH SSE 并逐帧转发到 WebSocket；会话列表、创建和发消息仍走 HTTPS。语音 `/stream` 不受影响。本机及公网首增量已在下一段复核；真机显示仍待验收。
 
 WebSocket 复测通过：本机短回答首增量约 1166 ms、最终约 1478 ms；公网较长回答首增量约 3236 ms、增量持续 2164 ms、最终约 5432 ms，共 319 个增量。错误令牌在握手后以 WebSocket 1008 拒绝。说明公网传输可在回答完成前持续送达；手机端实际绘制与网络切换行为仍需真机验收。测试命令为 `python voice-pc/verify_agent_websocket.py --base-url <https://.../agent> --long`，不会打印令牌或回答正文。
