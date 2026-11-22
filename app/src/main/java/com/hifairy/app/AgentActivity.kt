@@ -376,6 +376,17 @@ class AgentActivity : ComponentActivity() {
             val scope = rememberCoroutineScope()
             var modeSwitchTrigger by remember { mutableIntStateOf(0) }
             var modeSwitchOrigin by remember { mutableStateOf(Offset.Zero) }
+            val entryOrigin = remember { Offset(intent.getFloatExtra("reveal_x", 0f), intent.getFloatExtra("reveal_y", 0f)) }
+            val reveal = remember { Animatable(0f) }
+            LaunchedEffect(Unit) { reveal.animateTo(1f, tween(720)) }
+            LaunchedEffect(modeSwitchTrigger) {
+                if (modeSwitchTrigger > 0) {
+                    reveal.animateTo(0f, tween(720))
+                    finish()
+                    @Suppress("DEPRECATION")
+                    overridePendingTransition(0, 0)
+                }
+            }
             var tokenReady by remember { mutableStateOf(settings.agentToken().isNotBlank()) }
             var listOpen by remember { mutableStateOf(false) }
             var settingsOpenedFromDrawer by remember { mutableStateOf(false) }
@@ -563,13 +574,16 @@ class AgentActivity : ComponentActivity() {
                 }
             }
             BackHandler(listOpen) { listOpen = false }
+            BackHandler(!listOpen) { if (modeSwitchTrigger == 0) modeSwitchTrigger++ }
             LaunchedEffect(listOpen, settleVersion) {
                 val target = if (listOpen) 1f else 0f
                 drawerProgress.animateTo(target, DrawerMotion.settle)
                 drawerProgress.snapTo(target)
             }
 
-            BoxWithConstraints(Modifier.fillMaxSize().background(YoukaiTokens.background).draggable(
+            BoxWithConstraints(Modifier.fillMaxSize()
+                .modeCircularReveal(reveal.value, if (modeSwitchTrigger > 0) modeSwitchOrigin else entryOrigin, YoukaiTokens.accent)
+                .background(YoukaiTokens.background).draggable(
                 state = rememberDraggableState { delta -> dragProgress = (dragProgress + delta / drawerWidthPx).coerceIn(0f, 1f) },
                 orientation = Orientation.Horizontal,
                 onDragStarted = { drawerProgress.stop(); dragProgress = drawerProgress.value.coerceIn(0f, 1f); dragStartedOpen = dragProgress >= .5f; draggingDrawer = true },
@@ -625,7 +639,9 @@ class AgentActivity : ComponentActivity() {
                     if (!tokenReady) {
                         Column(Modifier.align(Alignment.Center)) {
                             Text("请在隐私安全中设置电脑 Agent 访问令牌", color = YoukaiTokens.text)
-                            Button(onClick = { privacyLauncher.launch(android.content.Intent(this@AgentActivity, MainActivity::class.java).putExtra("open_settings_only", true)) }) { Text("打开设置") }
+                            Button(onClick = { privacyLauncher.launch(android.content.Intent(this@AgentActivity, MainActivity::class.java).putExtra("open_settings_only", true)) },
+                                colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = YoukaiTokens.raisedCard,
+                                    contentColor = YoukaiTokens.text)) { Text("打开设置") }
                         }
                     } else if (selected.isBlank()) {
                         Text(greetingForHour(LocalTime.now().hour), color = YoukaiTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold,
@@ -757,7 +773,7 @@ class AgentActivity : ComponentActivity() {
                     }.padding(vertical = 22.dp))
                     Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                         sessions.forEach { session ->
-                            HistorySessionSurface(session.id == selected) {
+                            HistorySessionSurface(session.id == selected, eyeStyle = EyeStyle.YOUKAI) {
                                 Text(session.title, color = if (session.id == selected) YoukaiTokens.accent else YoukaiTokens.text,
                                     maxLines = 2, modifier = Modifier.fillMaxWidth().clickable {
                                         speechPlayer.stop(); items = emptyList(); loadedSession = ""; expanded.clear(); selected = session.id; listOpen = false; pendingPrompt = ""; liveText = ""; liveReasoning = ""
@@ -792,11 +808,6 @@ class AgentActivity : ComponentActivity() {
                         }
                     }
                 }
-            }
-            ModeRipple(modeSwitchTrigger, modeSwitchOrigin, ThemeTokens.background) {
-                finish()
-                @Suppress("DEPRECATION")
-                overridePendingTransition(0, 0)
             }
             }
         }

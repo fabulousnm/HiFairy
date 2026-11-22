@@ -255,7 +255,7 @@ internal fun MarkdownMessage(message: String, modifier: Modifier = Modifier, cop
                 tag = "markdown-text"
                 setTextColor(android.graphics.Color.rgb(232, 243, 255)); textSize = textSizeSp
                 setLineSpacing(4f, 1f); setTextIsSelectable(true)
-                setLinkTextColor(if (eyeStyle == EyeStyle.YOUKAI) android.graphics.Color.rgb(245, 138, 192) else android.graphics.Color.rgb(143, 180, 255))
+                setLinkTextColor(if (eyeStyle == EyeStyle.YOUKAI) android.graphics.Color.rgb(193, 140, 168) else android.graphics.Color.rgb(143, 180, 255))
                 this.eyeStyle = eyeStyle
             }, FrameLayout.LayoutParams(if (hasCodeBlock) -1 else -2, -2))
         }
@@ -290,7 +290,7 @@ internal fun MarkdownMessage(message: String, modifier: Modifier = Modifier, cop
                 val buttonSize = (32 * density).toInt()
                 val button = ImageButton(container.context).apply {
                     setImageResource(R.drawable.ic_copy_code)
-                    setColorFilter(if (eyeStyle == EyeStyle.YOUKAI) android.graphics.Color.rgb(245, 138, 192) else android.graphics.Color.rgb(143, 180, 255))
+                    setColorFilter(if (eyeStyle == EyeStyle.YOUKAI) android.graphics.Color.rgb(193, 140, 168) else android.graphics.Color.rgb(143, 180, 255))
                     background = null
                     contentDescription = "复制第 ${index + 1} 段代码"
                     setOnClickListener {
@@ -570,10 +570,13 @@ private fun ThemeButton(onClick: () -> Unit, content: @Composable RowScope.() ->
 }
 
 @Composable
-internal fun HistorySessionSurface(selected: Boolean, content: @Composable ColumnScope.() -> Unit) {
+internal fun HistorySessionSurface(selected: Boolean, eyeStyle: EyeStyle = EyeStyle.FAIRY, content: @Composable ColumnScope.() -> Unit) {
     val shape = RoundedCornerShape(14.dp)
-    val fill = if (selected) ThemeTokens.pressedCard else ThemeTokens.raisedCard
-    val rim = if (selected) ThemeTokens.pressedCardRim else ThemeTokens.raisedCardRim
+    val agent = eyeStyle == EyeStyle.YOUKAI
+    val fill = if (selected) (if (agent) YoukaiTokens.pressedCard else ThemeTokens.pressedCard)
+        else (if (agent) YoukaiTokens.raisedCard else ThemeTokens.raisedCard)
+    val rim = if (selected) (if (agent) YoukaiTokens.pressedCardRim else ThemeTokens.pressedCardRim)
+        else (if (agent) YoukaiTokens.raisedCardRim else ThemeTokens.raisedCardRim)
     Column(
         Modifier.fillMaxWidth().padding(bottom = 12.dp)
             .then(if (selected) Modifier else Modifier.shadow(9.dp, shape, ambientColor = Color(0xCC020410), spotColor = Color(0xFF020410)))
@@ -582,7 +585,7 @@ internal fun HistorySessionSurface(selected: Boolean, content: @Composable Colum
                 if (selected) {
                     val inset = 3.dp.toPx()
                     drawRoundRect(
-                        color = ThemeTokens.pressedInset,
+                        color = if (agent) YoukaiTokens.pressedInset else ThemeTokens.pressedInset,
                         topLeft = Offset(inset, inset),
                         size = Size(size.width - inset * 2, size.height - inset * 2),
                         cornerRadius = CornerRadius(11.dp.toPx()),
@@ -611,7 +614,6 @@ class MainActivity : ComponentActivity() {
     private var voiceEndpointDraft by mutableStateOf("")
     private lateinit var voiceInput: ParaformerVoiceInput
     private var page by mutableStateOf("chat")
-    private var modeSwitchTrigger by mutableIntStateOf(0)
     private var settingsFromHistory = false
     private var settingsOnly = false
     private var chatOpenedFromHistory = false
@@ -956,7 +958,11 @@ class MainActivity : ComponentActivity() {
                                                     eyeHoldTriggered = true
                                                     eyeCardOpen = false
                                                     stopBalanceVoice()
-                                                    if (modeSwitchTrigger == 0) modeSwitchTrigger++
+                                                    startActivity(Intent(this@MainActivity, AgentActivity::class.java)
+                                                        .putExtra("reveal_x", modeSwitchOrigin.x)
+                                                        .putExtra("reveal_y", modeSwitchOrigin.y))
+                                                    @Suppress("DEPRECATION")
+                                                    overridePendingTransition(0, 0)
                                                 }
                                                 eyeHoldProgress.animateTo(0f, tween(180))
                                             }
@@ -1242,18 +1248,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
             Box(Modifier.fillMaxSize().alpha(curtain.value).background(Color.Black))
-            ModeRipple(modeSwitchTrigger, modeSwitchOrigin, YoukaiTokens.background) {
-                startActivity(Intent(this@MainActivity, AgentActivity::class.java))
-                @Suppress("DEPRECATION")
-                overridePendingTransition(0, 0)
-            }
             }
         }
     }
 
     override fun onResume() {
         super.onResume()
-        modeSwitchTrigger = 0
         greetingHour = LocalTime.now().hour
         if (::secureSettings.isInitialized && page == "settings") modelsRefresh++
     }

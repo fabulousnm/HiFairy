@@ -13,6 +13,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.res.imageResource
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.rotate
@@ -26,7 +29,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.delay
 import kotlin.random.Random
 import kotlin.math.sin
-import kotlin.math.cos
 
 private data class EyeGlitchBand(val top: Float, val height: Float, val brightness: Float)
 internal enum class EyeStyle { FAIRY, YOUKAI }
@@ -93,6 +95,10 @@ private fun rememberPhoneGaze(enabled: Boolean): Offset {
 /** Fairy-DSH eye geometry and timing, adapted from the local Apache-2.0 reference. */
 @Composable
 internal fun FairyEye(modifier: Modifier = Modifier, active: Boolean = false, completionToken: Int = 0, blinkToken: Int = 0, style: EyeStyle = EyeStyle.FAIRY) {
+    val resources = LocalContext.current.resources
+    val youkaiImage = if (style == EyeStyle.YOUKAI) remember(resources) {
+        ImageBitmap.imageResource(resources, R.drawable.youkai_eye_reference)
+    } else null
     val phoneGaze = rememberPhoneGaze(!active)
     val motion = rememberInfiniteTransition(label = "Fairy eye")
     val breath by motion.animateFloat(1f, .92f, infiniteRepeatable(tween(1500, easing = EaseInOutSine), RepeatMode.Reverse), label = "iris breathing")
@@ -152,57 +158,56 @@ internal fun FairyEye(modifier: Modifier = Modifier, active: Boolean = false, co
         val center = Offset(size.width / 2f, size.height / 2f)
         fun circle(color: Color, radius: Float, at: Offset = center) = drawCircle(color, radius * unit, at)
         if (style == EyeStyle.YOUKAI) {
-            val rim = Color(0xFFF48ABD)
-            val shadow = Color(0xFF4A1435)
-            circle(Color(0xFFDE4D9E).copy(alpha = .24f * halo), 79f)
-            circle(rim.copy(alpha = .19f * halo), 73f)
-            drawCircle(rim, 69f * unit, center, style = Stroke(1.7f * unit))
-            circle(Color(0xFF43112F), 68f)
-            rotate(cornerRotation, center) {
-                repeat(6) { index ->
-                    val angle = index * Math.PI / 3.0
-                    val x = center.x + cos(angle).toFloat() * 54f * unit
-                    val y = center.y + sin(angle).toFloat() * 54f * unit
-                    drawCircle(Brush.radialGradient(listOf(Color(0xFF8D3A6E), shadow), Offset(x, y), 37f * unit), 36f * unit, Offset(x, y))
-                }
-            }
-            translate(gazeX * unit, gazeY * unit) {
-                scale(breath, breath, center) {
-                    circle(Color(0xFFFFF4F7), 46f)
-                    circle(Color(0xFFCB9BB2), 30f)
-                    circle(Color(0xFFA73F77), 23f)
-                    circle(Color(0xFF5E173C), 17f)
-                    circle(Color(0xFFF8C7DC).copy(alpha = .68f), 12f, center + Offset(14f * unit, 17f * unit))
-                }
-            }
-            val eyeClip = Path().apply { addOval(androidx.compose.ui.geometry.Rect(center, 48f * unit)) }
+            val rose = Color(0xFFD887AF)
+            val imageOffset = androidx.compose.ui.unit.IntOffset((center.x - 80f * unit).toInt(), (center.y - 80f * unit).toInt())
+            val imageSize = androidx.compose.ui.unit.IntSize((160f * unit).toInt(), (160f * unit).toInt())
+            val eyeClip = Path().apply { addOval(androidx.compose.ui.geometry.Rect(center, 79f * unit)) }
             clipPath(eyeClip) {
+                scale(1f + (breath - 1f) * .13f, 1f + (breath - 1f) * .13f, center) {
+                    drawImage(youkaiImage!!, dstOffset = imageOffset, dstSize = imageSize)
+                }
+                val outerPetals = Path().apply {
+                    fillType = PathFillType.EvenOdd
+                    addOval(androidx.compose.ui.geometry.Rect(center, 68f * unit))
+                    addOval(androidx.compose.ui.geometry.Rect(center, 48f * unit))
+                }
+                clipPath(outerPetals) {
+                    rotate(cornerRotation, center) { drawImage(youkaiImage!!, dstOffset = imageOffset, dstSize = imageSize) }
+                }
                 if (active) {
-                    val scanY = center.y - 48f * unit + scan * 96f * unit
-                    drawRect(Brush.verticalGradient(listOf(Color.Transparent, rim.copy(alpha = .3f), Color.Transparent),
-                        startY = scanY - 10f * unit, endY = scanY + 10f * unit),
-                        topLeft = Offset(center.x - 48f * unit, scanY - 10f * unit),
-                        size = androidx.compose.ui.geometry.Size(96f * unit, 20f * unit))
+                    val scanY = center.y - 55f * unit + scan * 110f * unit
+                    drawRect(Brush.verticalGradient(listOf(Color.Transparent, rose.copy(alpha = .22f), Color.Transparent),
+                        startY = scanY - 9f * unit, endY = scanY + 9f * unit),
+                        Offset(center.x - 55f * unit, scanY - 9f * unit),
+                        androidx.compose.ui.geometry.Size(110f * unit, 18f * unit))
                 }
                 val edge = center.y - (47f - 83f * lid) * unit
                 val cover = Path().apply {
-                    moveTo(center.x - 50f * unit, center.y - 105f * unit)
-                    lineTo(center.x + 50f * unit, center.y - 105f * unit)
+                    moveTo(center.x - 50f * unit, center.y - 110f * unit)
+                    lineTo(center.x + 50f * unit, center.y - 110f * unit)
                     lineTo(center.x + 50f * unit, edge)
-                    quadraticTo(center.x, edge + 23f * unit, center.x - 50f * unit, edge)
+                    quadraticTo(center.x, edge + 20f * unit, center.x - 50f * unit, edge)
                     close()
                 }
-                drawPath(cover, shadow)
+                drawPath(cover, Color(0xFF421328).copy(alpha = lid.coerceIn(0f, 1f)))
                 glitchBands.forEach { band ->
-                    val y = center.y - 48f * unit + band.top * 96f * unit
-                    drawRect(rim.copy(alpha = band.brightness), Offset(center.x - 48f * unit, y),
-                        androidx.compose.ui.geometry.Size(96f * unit, band.height * 96f * unit))
+                    val y = center.y - 49f * unit + band.top * 98f * unit
+                    drawRect(rose.copy(alpha = band.brightness), Offset(center.x - 49f * unit, y),
+                        androidx.compose.ui.geometry.Size(98f * unit, band.height * 98f * unit))
+                }
+            }
+            rotate(cornerRotation, center) {
+                repeat(6) { index ->
+                    drawArc(rose.copy(alpha = .25f), index * 60f + 9f, 13f, false,
+                        topLeft = Offset(center.x - 68f * unit, center.y - 68f * unit),
+                        size = androidx.compose.ui.geometry.Size(136f * unit, 136f * unit),
+                        style = Stroke(1.5f * unit))
                 }
             }
             val ringPhase = ring.coerceIn(0f, .36f) / .36f
-            if (ring < .36f) drawCircle(rim.copy(alpha = .65f * (1f - ringPhase)),
-                (69f + 82f * ringPhase) * unit, center, style = Stroke(2f * unit))
-            if (completion.value < 1f) drawCircle(rim.copy(alpha = .8f * (1f - completion.value)),
+            if (ring < .36f) drawCircle(rose.copy(alpha = .25f * (1f - ringPhase)),
+                (69f + 36f * ringPhase) * unit, center, style = Stroke(1.3f * unit))
+            if (completion.value < 1f) drawCircle(rose.copy(alpha = .7f * (1f - completion.value)),
                 (69f + 22f * completion.value) * unit, center, style = Stroke(2f * unit))
             return@Canvas
         }
