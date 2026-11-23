@@ -31,8 +31,10 @@ def _bridge_path(path: str) -> str:
     if path in {"sessions", "modes", "workspaces"}:
         return "/" + path
     parts = path.split("/")
+    if len(parts) == 3 and parts[0] == "workspaces" and parts[2] in {"files", "upload", "download"} and parts[1] and all(c.isascii() and (c.isalnum() or c in "-_") for c in parts[1]):
+        return "/" + path
     valid_session = len(parts) >= 3 and parts[0] == "sessions" and parts[1].startswith("session-")
-    valid_suffix = len(parts) == 3 and parts[2] in {"messages", "snapshot", "events", "recent"}
+    valid_suffix = len(parts) == 3 and parts[2] in {"messages", "snapshot", "events", "recent", "cancel", "attachments"}
     valid_detail = len(parts) == 5 and parts[2] == "details" and parts[3] in {"reasoning", "tool", "terminal", "commentary"} and parts[4] and all(c.isascii() and (c.isalnum() or c in "-_") for c in parts[4])
     if valid_session and (valid_suffix or valid_detail):
         suffix = parts[1][8:]
@@ -77,11 +79,31 @@ async def agent_live(ws: WebSocket, session_id: str):
 async def agent_proxy(path: str, request: Request, authorization: str | None = Header(default=None)):
     bridge_token = _tokens(authorization)
     target = _bridge_path(path)
-    allowed = (request.method == "GET" and target != "/sessions" and not target.endswith("/messages")) or (request.method == "GET" and target == "/sessions") or (request.method == "POST" and (target == "/sessions" or target.endswith("/messages")))
+    allowed = (request.method == "GET" and not target.endswith(("/messages", "/upload", "/cancel", "/attachments"))) or (request.method == "POST" and (target == "/sessions" or target.endswith(("/messages", "/upload", "/cancel", "/attachments"))))
     if not allowed:
         raise HTTPException(405, "method_not_allowed")
     headers = {"Authorization": f"Bearer {bridge_token}"}
     url = BRIDGE_URL + target
+    if target.endswith(("/files", "/download", "/upload", "/attachments")):
+        query = request.url.query
+        if len(query) > 2048:
+            raise HTTPException(400, "query_too_large")
+        url += "?" + query if query else ""
+    if target.endswith(("/upload", "/attachments")):
+        if int(request.headers.get("content-length", "0")) > 25 * 1024 * 1024:
+            raise HTTPException(413, "request_too_large")
+        try:
+            async with httpx.AsyncClient(timeout=60, trust_env=False) as client:
+                upstream = await client.post(url, headers=headers, content=request.stream())
+        except httpx.HTTPError:
+            raise HTTPException(503, "bridge_unavailable") from None
+        return Response(upstream.content, status_code=upstream.status_code, media_type="application/json", headers={"Cache-Control": "no-store"})
+    if target.endswith("/download"):
+        async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
+            upstream = await client.get(url, headers=headers)
+        return Response(upstream.content, status_code=upstream.status_code,
+                        media_type="application/octet-stream" if upstream.status_code == 200 else "application/json",
+                        headers={"Cache-Control": "no-store"})
     if target.endswith("/events"):
         async def events():
             try:

@@ -1,6 +1,7 @@
 package com.hifairy.app
 
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -13,8 +14,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathFillType
-import androidx.compose.ui.res.imageResource
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
@@ -32,6 +32,19 @@ import kotlin.math.sin
 
 private data class EyeGlitchBand(val top: Float, val height: Float, val brightness: Float)
 internal enum class EyeStyle { FAIRY, YOUKAI }
+private data class YoukaiLayers(val outer: ImageBitmap, val white: ImageBitmap, val pupil: ImageBitmap)
+private object YoukaiArtwork {
+    @Volatile private var cached: YoukaiLayers? = null
+
+    fun get(context: Context): YoukaiLayers = cached ?: synchronized(this) {
+        cached ?: run {
+            fun load(id: Int) = requireNotNull(BitmapFactory.decodeResource(context.resources, id,
+                BitmapFactory.Options().apply { inSampleSize = 2; inScaled = false })) { "Missing YOUKAI layer $id" }.asImageBitmap()
+            YoukaiLayers(load(R.drawable.youkai_outer_ring), load(R.drawable.youkai_sclera),
+                load(R.drawable.youkai_pupil)).also { cached = it }
+        }
+    }
+}
 private object EyeGazeMotion {
     const val maxTravel = 11f
     const val gravity = 9.81f
@@ -95,10 +108,8 @@ private fun rememberPhoneGaze(enabled: Boolean): Offset {
 /** Fairy-DSH eye geometry and timing, adapted from the local Apache-2.0 reference. */
 @Composable
 internal fun FairyEye(modifier: Modifier = Modifier, active: Boolean = false, completionToken: Int = 0, blinkToken: Int = 0, style: EyeStyle = EyeStyle.FAIRY) {
-    val resources = LocalContext.current.resources
-    val youkaiImage = if (style == EyeStyle.YOUKAI) remember(resources) {
-        ImageBitmap.imageResource(resources, R.drawable.youkai_eye_reference)
-    } else null
+    val context = LocalContext.current
+    val youkaiLayers = if (style == EyeStyle.YOUKAI) remember { YoukaiArtwork.get(context) } else null
     val phoneGaze = rememberPhoneGaze(!active)
     val motion = rememberInfiniteTransition(label = "Fairy eye")
     val breath by motion.animateFloat(1f, .92f, infiniteRepeatable(tween(1500, easing = EaseInOutSine), RepeatMode.Reverse), label = "iris breathing")
@@ -158,51 +169,45 @@ internal fun FairyEye(modifier: Modifier = Modifier, active: Boolean = false, co
         val center = Offset(size.width / 2f, size.height / 2f)
         fun circle(color: Color, radius: Float, at: Offset = center) = drawCircle(color, radius * unit, at)
         if (style == EyeStyle.YOUKAI) {
-            val rose = Color(0xFFD887AF)
-            val imageOffset = androidx.compose.ui.unit.IntOffset((center.x - 80f * unit).toInt(), (center.y - 80f * unit).toInt())
-            val imageSize = androidx.compose.ui.unit.IntSize((160f * unit).toInt(), (160f * unit).toInt())
-            val eyeClip = Path().apply { addOval(androidx.compose.ui.geometry.Rect(center, 79f * unit)) }
-            clipPath(eyeClip) {
-                scale(1f + (breath - 1f) * .13f, 1f + (breath - 1f) * .13f, center) {
-                    drawImage(youkaiImage!!, dstOffset = imageOffset, dstSize = imageSize)
-                }
-                val outerPetals = Path().apply {
-                    fillType = PathFillType.EvenOdd
-                    addOval(androidx.compose.ui.geometry.Rect(center, 68f * unit))
-                    addOval(androidx.compose.ui.geometry.Rect(center, 48f * unit))
-                }
-                clipPath(outerPetals) {
-                    rotate(cornerRotation, center) { drawImage(youkaiImage!!, dstOffset = imageOffset, dstSize = imageSize) }
-                }
-                if (active) {
-                    val scanY = center.y - 55f * unit + scan * 110f * unit
-                    drawRect(Brush.verticalGradient(listOf(Color.Transparent, rose.copy(alpha = .22f), Color.Transparent),
-                        startY = scanY - 9f * unit, endY = scanY + 9f * unit),
-                        Offset(center.x - 55f * unit, scanY - 9f * unit),
-                        androidx.compose.ui.geometry.Size(110f * unit, 18f * unit))
-                }
-                val edge = center.y - (47f - 83f * lid) * unit
-                val cover = Path().apply {
-                    moveTo(center.x - 50f * unit, center.y - 110f * unit)
-                    lineTo(center.x + 50f * unit, center.y - 110f * unit)
-                    lineTo(center.x + 50f * unit, edge)
-                    quadraticTo(center.x, edge + 20f * unit, center.x - 50f * unit, edge)
-                    close()
-                }
-                drawPath(cover, Color(0xFF421328).copy(alpha = lid.coerceIn(0f, 1f)))
-                glitchBands.forEach { band ->
-                    val y = center.y - 49f * unit + band.top * 98f * unit
-                    drawRect(rose.copy(alpha = band.brightness), Offset(center.x - 49f * unit, y),
-                        androidx.compose.ui.geometry.Size(98f * unit, band.height * 98f * unit))
+            val layers = requireNotNull(youkaiLayers)
+            val rose = Color(0xFFC18CA8)
+            fun layerSize(width: Float, ratio: Float): androidx.compose.ui.unit.IntSize =
+                androidx.compose.ui.unit.IntSize((width * unit).toInt(), (width * ratio * unit).toInt())
+            fun layerOffset(layerSize: androidx.compose.ui.unit.IntSize): androidx.compose.ui.unit.IntOffset =
+                androidx.compose.ui.unit.IntOffset((center.x - layerSize.width / 2f).toInt(), (center.y - layerSize.height / 2f).toInt())
+            val outerSize = layerSize(136f, 3092f / 3065f)
+            val whiteSize = layerSize(86.1f, 1943f / 1941f)
+            val pupilSize = layerSize(55.6f, 1182f / 1254f)
+            val eyeOpen = (1f - lid).coerceIn(.02f, 1f)
+            drawCircle(rose.copy(alpha = .09f * halo), 75f * unit, center)
+            rotate(cornerRotation, center) {
+                drawImage(layers.outer, dstOffset = layerOffset(outerSize), dstSize = outerSize)
+            }
+            scale(1f, eyeOpen, center) {
+                drawImage(layers.white, dstOffset = layerOffset(whiteSize), dstSize = whiteSize)
+                translate(gazeX * .65f * unit, gazeY * .65f * unit) {
+                    scale(breath, breath, center) {
+                        drawImage(layers.pupil, dstOffset = layerOffset(pupilSize), dstSize = pupilSize)
+                    }
                 }
             }
-            rotate(cornerRotation, center) {
-                repeat(6) { index ->
-                    drawArc(rose.copy(alpha = .25f), index * 60f + 9f, 13f, false,
-                        topLeft = Offset(center.x - 68f * unit, center.y - 68f * unit),
-                        size = androidx.compose.ui.geometry.Size(136f * unit, 136f * unit),
-                        style = Stroke(1.5f * unit))
+            if (lid > .88f) drawLine(rose.copy(alpha = (lid - .88f) * 4f),
+                Offset(center.x - 37f * unit, center.y), Offset(center.x + 37f * unit, center.y),
+                2f * unit)
+            if (active) {
+                val scanY = center.y - 44f * unit + scan * 88f * unit
+                val scanClip = Path().apply { addOval(androidx.compose.ui.geometry.Rect(center, 44f * unit)) }
+                clipPath(scanClip) {
+                    drawRect(Brush.verticalGradient(listOf(Color.Transparent, rose.copy(alpha = .2f), Color.Transparent),
+                        startY = scanY - 9f * unit, endY = scanY + 9f * unit),
+                        Offset(center.x - 44f * unit, scanY - 9f * unit),
+                        androidx.compose.ui.geometry.Size(88f * unit, 18f * unit))
                 }
+            }
+            glitchBands.forEach { band ->
+                val y = center.y - 42f * unit + band.top * 84f * unit
+                drawRect(rose.copy(alpha = band.brightness * .6f), Offset(center.x - 42f * unit, y),
+                    androidx.compose.ui.geometry.Size(84f * unit, band.height * 84f * unit))
             }
             val ringPhase = ring.coerceIn(0f, .36f) / .36f
             if (ring < .36f) drawCircle(rose.copy(alpha = .25f * (1f - ringPhase)),

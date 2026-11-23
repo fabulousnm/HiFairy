@@ -40,6 +40,11 @@ def test_agent_gateway():
             assert (await client.get("/agent/sessions", headers={"Authorization": "Bearer mobile-secret"})).status_code == 200
             assert (await client.get("/agent/modes", headers={"Authorization": "Bearer mobile-secret"})).status_code == 200
             assert (await client.get("/agent/workspaces", headers={"Authorization": "Bearer mobile-secret"})).status_code == 200
+            assert (await client.get("/agent/workspaces/project/files?path=child", headers={"Authorization": "Bearer mobile-secret"})).status_code == 200
+            assert (await client.get("/agent/workspaces/project/download?path=note.txt", headers={"Authorization": "Bearer mobile-secret"})).status_code == 200
+            assert (await client.post("/agent/workspaces/project/upload?name=note.txt", headers={"Authorization": "Bearer mobile-secret"}, content=b"file")).status_code == 200
+            assert (await client.post("/agent/sessions/session-abc/attachments?name=note.txt", headers={"Authorization": "Bearer mobile-secret"}, content=b"file")).status_code == 200
+            assert (await client.post("/agent/sessions/session-abc/cancel", headers={"Authorization": "Bearer mobile-secret"}, json={})).status_code == 200
             assert (await client.get("/agent/sessions/session-abc/recent", headers={"Authorization": "Bearer mobile-secret"})).status_code == 200
             assert (await client.get("/agent/sessions/session-abc/details/tool/call_01_x", headers={"Authorization": "Bearer mobile-secret"})).status_code == 200
             assert (await client.get("/agent/sessions/session-abc/details/terminal/12", headers={"Authorization": "Bearer mobile-secret"})).status_code == 200
@@ -48,6 +53,11 @@ def test_agent_gateway():
             assert calls == [("GET", "/sessions", "Bearer bridge-secret"),
                              ("GET", "/modes", "Bearer bridge-secret"),
                              ("GET", "/workspaces", "Bearer bridge-secret"),
+                             ("GET", "/workspaces/project/files", "Bearer bridge-secret"),
+                             ("GET", "/workspaces/project/download", "Bearer bridge-secret"),
+                             ("POST", "/workspaces/project/upload", "Bearer bridge-secret"),
+                             ("POST", "/sessions/session-abc/attachments", "Bearer bridge-secret"),
+                             ("POST", "/sessions/session-abc/cancel", "Bearer bridge-secret"),
                              ("GET", "/sessions/session-abc/recent", "Bearer bridge-secret"),
                              ("GET", "/sessions/session-abc/details/tool/call_01_x", "Bearer bridge-secret"),
                              ("GET", "/sessions/session-abc/details/terminal/12", "Bearer bridge-secret"),

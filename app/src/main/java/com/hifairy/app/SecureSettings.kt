@@ -68,6 +68,10 @@ class SecureSettings(context: Context) {
         get() = prefs.getBoolean("voice_auto_play", true)
         set(value) { prefs.edit().putBoolean("voice_auto_play", value).apply() }
 
+    var agentBalanceVoiceEnabled: Boolean
+        get() = prefs.getBoolean("agent_balance_voice_enabled", true)
+        set(value) { prefs.edit().putBoolean("agent_balance_voice_enabled", value).apply() }
+
     var webSearch: Boolean
         get() = prefs.getBoolean("web_search", false)
         set(value) { prefs.edit().putBoolean("web_search", value).apply() }

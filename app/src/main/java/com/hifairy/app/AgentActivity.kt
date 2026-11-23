@@ -6,6 +6,12 @@ import android.content.pm.PackageManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.OpenableColumns
+import android.webkit.MimeTypeMap
+import androidx.core.content.FileProvider
+import android.media.MediaPlayer
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.BackHandler
@@ -21,7 +27,10 @@ import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.shadow
@@ -69,6 +78,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withTimeout
 import java.time.LocalTime
+import java.time.Instant
+import java.math.BigDecimal
 import org.json.JSONObject
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -77,15 +88,21 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
+import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
 
-private data class AgentSession(val id: String, val title: String)
+private data class AgentSession(val id: String, val title: String, val running: Boolean = false)
 private data class AgentItem(val id: String, val kind: String, val text: String, val title: String, val detailKey: String, val parentId: String, val hasResult: Boolean)
 private data class AgentDetail(val text: String = "", val input: String = "", val output: String = "", val terminal: Boolean = false)
 private data class AgentChoice(val id: String, val title: String, val isDefault: Boolean = false)
+private data class AgentFile(val name: String, val directory: Boolean)
+private data class AgentFolder(val path: String, val parent: String?, val items: List<AgentFile>)
+private data class AgentUpload(val name: String, val path: String)
+private data class AgentPendingAttachment(val name: String, val uri: Uri)
 
 private fun agentConnectionError(error: Exception): String =
     if (error is java.net.SocketTimeoutException || error.message?.contains("timeout", ignoreCase = true) == true)
@@ -239,20 +256,27 @@ private fun AgentHistoryLoading() {
 }
 
 @Composable
-private fun AgentHoldEye(size: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier, active: Boolean = false, onSwitch: () -> Unit) {
+private fun AgentHoldEye(size: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier, active: Boolean = false,
+                         blinkToken: Int = 0, onSwitch: () -> Unit, onTap: () -> Unit, onDoubleTap: () -> Unit) {
     val progress = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
+    var holdTriggered by remember { mutableStateOf(false) }
     Box(modifier.size(size)) {
-        FairyEye(Modifier.fillMaxSize().pointerInput(Unit) {
+        FairyEye(Modifier.fillMaxSize().pointerInput(active) {
             detectTapGestures(onPress = {
                 progress.snapTo(0f)
                 val animation = scope.launch { progress.animateTo(1f, tween(AGENT_MODE_HOLD_MS.toInt())) }
                 val released = withTimeoutOrNull(AGENT_MODE_HOLD_MS) { tryAwaitRelease() }
                 animation.cancel()
-                if (released == null) onSwitch()
+                if (released == null) {
+                    holdTriggered = true
+                    onSwitch()
+                    scope.launch { delay(500); holdTriggered = false }
+                }
                 progress.animateTo(0f, tween(180))
-            })
-        }, active = active, style = EyeStyle.YOUKAI)
+            }, onTap = { if (!active && !holdTriggered) onTap() },
+                onDoubleTap = { if (!active) onDoubleTap() })
+        }, active = active, blinkToken = blinkToken, style = EyeStyle.YOUKAI)
         if (progress.value > .001f) Canvas(Modifier.matchParentSize()) {
             drawArc(YoukaiTokens.accent, -90f, 360f * progress.value, false,
                 style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round))
@@ -275,7 +299,7 @@ private class AgentConnection(private val settings: SecureSettings) {
         connection.instanceFollowRedirects = false
         connection.requestMethod = method
         connection.connectTimeout = 10000
-        connection.readTimeout = if (path.endsWith("/events")) 0 else 20000
+        connection.readTimeout = if (path.endsWith("/events")) 0 else if (path.contains("/upload?") || path.contains("/attachments?") || path.contains("/download?")) 120000 else 20000
         connection.setRequestProperty("Authorization", "Bearer ${settings.agentToken()}")
         if (body != null) {
             connection.doOutput = true
@@ -297,7 +321,7 @@ private class AgentConnection(private val settings: SecureSettings) {
     fun sessions(): List<AgentSession> {
         val items = request("/sessions").getJSONArray("items")
         return (0 until items.length()).map { items.getJSONObject(it) }.map {
-            AgentSession(it.getString("sessionId"), it.optString("title").ifBlank { "新任务" })
+            AgentSession(it.getString("sessionId"), it.optString("title").ifBlank { "新任务" }, it.optBoolean("running"))
         }
     }
 
@@ -315,7 +339,48 @@ private class AgentConnection(private val settings: SecureSettings) {
     }
     fun create(workspaceId: String, agentPreset: String): String = request("/sessions", "POST",
         JSONObject().put("workspaceId", workspaceId).put("agentPreset", agentPreset).toString()).getString("sessionId")
-    fun send(id: String, text: String) { request("/sessions/$id/messages", "POST", JSONObject().put("text", text).toString()) }
+    fun send(id: String, text: String, receipts: List<String> = emptyList()) {
+        val body = JSONObject().put("text", text).put("attachments", org.json.JSONArray(receipts))
+        request("/sessions/$id/messages", "POST", body.toString())
+    }
+    fun cancel(id: String) { request("/sessions/$id/cancel", "POST", "{}") }
+    private fun encoded(value: String) = URLEncoder.encode(value, "UTF-8")
+    fun folder(workspaceId: String, path: String): AgentFolder {
+        val json = request("/workspaces/$workspaceId/files?path=${encoded(path)}")
+        val entries = json.getJSONArray("items")
+        return AgentFolder(json.optString("path"), json.optString("parent").takeIf { it.isNotBlank() && it != "null" },
+            (0 until entries.length()).map { entries.getJSONObject(it) }.map { AgentFile(it.getString("name"), it.optBoolean("directory")) })
+    }
+    fun upload(workspaceId: String, path: String, name: String, bytes: ByteArray): AgentUpload {
+        val connection = open("/workspaces/$workspaceId/upload?path=${encoded(path)}&name=${encoded(name)}", "POST")
+        try {
+            connection.doOutput = true
+            connection.setRequestProperty("Content-Type", "application/octet-stream")
+            connection.setFixedLengthStreamingMode(bytes.size)
+            connection.outputStream.use { it.write(bytes) }
+            if (connection.responseCode !in 200..299) throw IllegalStateException("上传失败：${connection.responseCode}")
+            val json = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
+            return AgentUpload(json.getString("name"), json.getString("path"))
+        } finally { connection.disconnect() }
+    }
+    fun uploadAttachment(sessionId: String, name: String, bytes: ByteArray): String {
+        val connection = open("/sessions/$sessionId/attachments?name=${encoded(name)}", "POST")
+        try {
+            connection.doOutput = true
+            connection.setRequestProperty("Content-Type", "application/octet-stream")
+            connection.setFixedLengthStreamingMode(bytes.size)
+            connection.outputStream.use { it.write(bytes) }
+            if (connection.responseCode !in 200..299) throw IllegalStateException("附件上传失败：${connection.responseCode}")
+            return JSONObject(connection.inputStream.bufferedReader().use { it.readText() }).getString("receiptId")
+        } finally { connection.disconnect() }
+    }
+    fun download(workspaceId: String, path: String): ByteArray {
+        val connection = open("/workspaces/$workspaceId/download?path=${encoded(path)}")
+        try {
+            if (connection.responseCode !in 200..299) throw IllegalStateException("下载失败：${connection.responseCode}")
+            return connection.inputStream.use { it.readBytes() }
+        } finally { connection.disconnect() }
+    }
 
     fun recent(id: String): List<AgentItem> {
         val items = request("/sessions/$id/recent").getJSONArray("items")
@@ -359,11 +424,32 @@ private class AgentConnection(private val settings: SecureSettings) {
 }
 
 class AgentActivity : ComponentActivity() {
-    private var activeSpeech: FairySpeechPlayer? = null
+    private var balancePlayer: MediaPlayer? = null
     private var activeVoiceInput: ParaformerVoiceInput? = null
 
+    private fun stopBalanceVoice() {
+        balancePlayer?.let { player ->
+            balancePlayer = null
+            try { player.stop() } catch (_: Exception) { }
+            player.release()
+        }
+    }
+
+    private fun playBalanceVoice(low: Boolean) {
+        stopBalanceVoice()
+        val resource = if (low) R.raw.fairy_balance_low else R.raw.fairy_balance_ok
+        val player = MediaPlayer.create(this, resource) ?: return
+        balancePlayer = player
+        player.setOnCompletionListener { if (balancePlayer === player) balancePlayer = null; player.release() }
+        player.start()
+    }
+
+    override fun onPause() {
+        stopBalanceVoice()
+        super.onPause()
+    }
+
     override fun onStop() {
-        activeSpeech?.stop()
         activeVoiceInput?.let { if (it.recording) it.finish(true) }
         super.onStop()
     }
@@ -404,10 +490,57 @@ class AgentActivity : ComponentActivity() {
             var draft by remember { mutableStateOf("") }
             var error by remember { mutableStateOf("") }
             var busy by remember { mutableStateOf(false) }
+            var fileDrawerOpen by remember { mutableStateOf(false) }
+            var folder by remember { mutableStateOf<AgentFolder?>(null) }
+            var folderLoading by remember { mutableStateOf(false) }
+            var folderWorkspace by remember { mutableStateOf("") }
+            var attachOnUpload by remember { mutableStateOf(false) }
+            val pendingUploads = remember { mutableStateListOf<AgentPendingAttachment>() }
+            var pendingSave by remember { mutableStateOf<Pair<String, String>?>(null) }
+            var interruptedSession by remember { mutableStateOf("") }
+            var interruptedText by remember { mutableStateOf("") }
             var modes by remember { mutableStateOf(emptyList<AgentChoice>()) }
             var workspaces by remember { mutableStateOf(emptyList<AgentChoice>()) }
             var chosenMode by remember { mutableStateOf("") }
             var chosenWorkspace by remember { mutableStateOf("") }
+            val openDocument = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+                if (uri != null && chosenWorkspace.isNotBlank()) scope.launch {
+                    try {
+                        var name = "附件"
+                        var declaredSize = -1L
+                        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                name = cursor.getString(0) ?: name
+                                if (!cursor.isNull(1)) declaredSize = cursor.getLong(1)
+                            }
+                        }
+                        if (declaredSize > 25L * 1024 * 1024) throw IllegalStateException("附件最大 25 MB")
+                        if (attachOnUpload) {
+                            if (pendingUploads.size >= 5) throw IllegalStateException("每次最多添加 5 个附件")
+                            pendingUploads.add(AgentPendingAttachment(name, uri))
+                        }
+                        else {
+                            val bytes = withContext(Dispatchers.IO) { contentResolver.openInputStream(uri)?.use { it.readNBytes(25 * 1024 * 1024 + 1) } ?: throw IllegalStateException("无法读取附件") }
+                            if (bytes.size > 25 * 1024 * 1024) throw IllegalStateException("附件最大 25 MB")
+                            val currentPath = folder?.path.orEmpty()
+                            withContext(Dispatchers.IO) { api.upload(chosenWorkspace, currentPath, name, bytes) }
+                            if (fileDrawerOpen) folder = withContext(Dispatchers.IO) { api.folder(chosenWorkspace, folder?.path.orEmpty()) }
+                        }
+                        error = ""
+                    } catch (e: Exception) { error = e.message ?: "上传失败" }
+                }
+            }
+            val saveDocument = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri: Uri? ->
+                val target = pendingSave
+                pendingSave = null
+                if (uri != null && target != null) scope.launch {
+                    try {
+                        val bytes = withContext(Dispatchers.IO) { api.download(target.first, target.second) }
+                        withContext(Dispatchers.IO) { contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: throw IllegalStateException("无法保存文件") }
+                        error = ""
+                    } catch (e: Exception) { error = e.message ?: "下载失败" }
+                }
+            }
             var choicesLoading by remember { mutableStateOf(false) }
             var choicesRefreshVersion by remember { mutableIntStateOf(0) }
             val drawerWidthPx = with(LocalDensity.current) { LocalConfiguration.current.screenWidthDp.dp.toPx() * .75f }
@@ -423,11 +556,16 @@ class AgentActivity : ComponentActivity() {
             var voiceCancel by remember { mutableStateOf(false) }
             var voiceStatus by remember { mutableStateOf("") }
             var voiceLevel by remember { mutableFloatStateOf(0f) }
-            var playingIndex by remember { mutableIntStateOf(-1) }
-            var voiceAutoPlay by remember { mutableStateOf(settings.voiceAutoPlay) }
-            val speechPlayer = remember { FairySpeechPlayer { _, active, _ -> if (!active) runOnUiThread { playingIndex = -1 } } }
-            activeSpeech = speechPlayer
-            DisposableEffect(Unit) { onDispose { speechPlayer.close() } }
+            var balanceVoiceEnabled by remember { mutableStateOf(settings.agentBalanceVoiceEnabled) }
+            var eyeCardOpen by remember { mutableStateOf(false) }
+            var balanceLoading by remember { mutableStateOf(false) }
+            var accountBalance by remember { mutableStateOf<AccountBalance?>(null) }
+            var balanceRequestSerial by remember { mutableIntStateOf(0) }
+            var eyeBlinkToken by remember { mutableIntStateOf(0) }
+            var balanceClock by remember { mutableStateOf(Instant.now()) }
+            LaunchedEffect(eyeCardOpen) {
+                while (eyeCardOpen) { balanceClock = Instant.now(); delay(1000) }
+            }
             var liveText by remember { mutableStateOf("") }
             var liveReasoning by remember { mutableStateOf("") }
             val streamReducer = remember(selected) { AgentStreamReducer() }
@@ -435,7 +573,9 @@ class AgentActivity : ComponentActivity() {
             DisposableEffect(Unit) { onDispose { api.close() } }
 
             fun newTask() {
-                speechPlayer.stop()
+                stopBalanceVoice()
+                eyeCardOpen = false
+                balanceRequestSerial++
                 selected = ""
                 items = emptyList()
                 loadedSession = ""
@@ -445,6 +585,10 @@ class AgentActivity : ComponentActivity() {
                 liveReasoning = ""
                 streamConnected = false
                 listOpen = false
+                fileDrawerOpen = false
+                interruptedSession = ""
+                interruptedText = ""
+                pendingUploads.clear()
                 choicesRefreshVersion++
             }
 
@@ -494,7 +638,7 @@ class AgentActivity : ComponentActivity() {
             }
 
             fun submit(text: String) {
-                if (busy || text.isBlank()) return
+                if (busy || (text.isBlank() && pendingUploads.isEmpty())) return
                 busy = true
                 scope.launch {
                     try {
@@ -505,15 +649,71 @@ class AgentActivity : ComponentActivity() {
                             items = emptyList()
                         }
                         withTimeout(10000L) { while (!streamConnected) delay(50) }
-                        pendingPrompt = text.trim()
-                        withContext(Dispatchers.IO) { api.send(selected, text.trim()) }
+                        val attachments = pendingUploads.toList()
+                        val receipts = withContext(Dispatchers.IO) { attachments.map { attachment ->
+                            val bytes = contentResolver.openInputStream(attachment.uri)?.use { it.readNBytes(25 * 1024 * 1024 + 1) }
+                                ?: throw IllegalStateException("无法读取附件")
+                            if (bytes.size > 25 * 1024 * 1024) throw IllegalStateException("附件最大 25 MB")
+                            api.uploadAttachment(selected, attachment.name, bytes)
+                        } }
+                        pendingPrompt = text.trim().ifBlank { "已发送 ${attachments.size} 个附件" }
+                        interruptedSession = ""
+                        interruptedText = ""
+                        withContext(Dispatchers.IO) { api.send(selected, text.trim(), receipts) }
                         draft = ""
+                        pendingUploads.clear()
                         refreshSelected()
                         refreshList()
                     } catch (e: Exception) {
                         pendingPrompt = ""
                         error = e.message ?: "发送失败"
                     } finally { busy = false }
+                }
+            }
+
+            fun loadFolder(workspaceId: String, path: String) {
+                if (workspaceId.isBlank()) return
+                folderLoading = true
+                folder = null // Release the previous directory before requesting the next one.
+                folderWorkspace = workspaceId
+                scope.launch {
+                    try {
+                        val result = withContext(Dispatchers.IO) { api.folder(workspaceId, path) }
+                        if (folderWorkspace == workspaceId && fileDrawerOpen) { folder = result; error = "" }
+                    } catch (e: Exception) { error = e.message ?: "读取目录失败" }
+                    finally { folderLoading = false }
+                }
+            }
+
+            fun previewFile(workspaceId: String, path: String, name: String) {
+                scope.launch {
+                    try {
+                        val bytes = withContext(Dispatchers.IO) { api.download(workspaceId, path) }
+                        val safeName = name.replace(Regex("[^\\p{L}\\p{N}._ -]"), "_")
+                        val preview = File(cacheDir, "agent-preview").apply { mkdirs() }
+                        preview.listFiles()?.forEach { it.delete() }
+                        val local = File(preview, safeName)
+                        withContext(Dispatchers.IO) { local.writeBytes(bytes) }
+                        val uri = FileProvider.getUriForFile(this@AgentActivity, "$packageName.files", local)
+                        val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(local.extension.lowercase()) ?: "application/octet-stream"
+                        startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                        error = ""
+                    } catch (e: Exception) { error = e.message ?: "本机无法预览此文件" }
+                }
+            }
+
+            fun cancelTask() {
+                val session = selected
+                if (session.isBlank()) return
+                scope.launch {
+                    try {
+                        withContext(Dispatchers.IO) { api.cancel(session) }
+                        interruptedSession = session
+                        interruptedText = liveText
+                        pendingPrompt = ""
+                        refreshSelected()
+                        refreshList()
+                    } catch (e: Exception) { error = e.message ?: "终止失败" }
                 }
             }
 
@@ -548,6 +748,9 @@ class AgentActivity : ComponentActivity() {
                                     liveReasoning = streamReducer.reasoning
                                 }
                                 val eventType = frame.optJSONObject("event")?.optString("type")
+                                if (eventType == "user/message" && interruptedSession == followingSession && pendingPrompt.isBlank()) {
+                                    interruptedSession = ""; interruptedText = ""
+                                }
                                 if (eventType in setOf("tool/call", "tool/result", "step/start", "step/end")) refreshSelected()
                                 if (frame.optString("type") == "event" && eventType == "assistant/message") {
                                     refreshSelected()
@@ -557,11 +760,6 @@ class AgentActivity : ComponentActivity() {
                                 if (frame.optString("type") == "event" && eventType == "turn/end") {
                                     refreshSelected()
                                     refreshList()
-                                    val latest = items.lastOrNull { it.kind == "assistant" }?.text.orEmpty()
-                                    if (voiceAutoPlay && latest.isNotBlank()) {
-                                        val index = items.indexOfLast { it.kind == "assistant" }
-                                        if (speechPlayer.play(settings.voiceEndpoint, settings.voiceToken(), latest, index.toLong())) playingIndex = index
-                                    }
                                     liveText = ""
                                     liveReasoning = ""
                                     pendingPrompt = ""
@@ -573,8 +771,20 @@ class AgentActivity : ComponentActivity() {
                     refreshList()
                 }
             }
-            BackHandler(listOpen) { listOpen = false }
-            BackHandler(!listOpen) { if (modeSwitchTrigger == 0) modeSwitchTrigger++ }
+            BackHandler(fileDrawerOpen) {
+                val parent = folder?.parent
+                if (parent != null) loadFolder(chosenWorkspace, parent)
+                else { fileDrawerOpen = false; folder = null }
+            }
+            BackHandler(listOpen && !fileDrawerOpen) { listOpen = false }
+            BackHandler(!listOpen && !fileDrawerOpen) { if (modeSwitchTrigger == 0) modeSwitchTrigger++ }
+            LaunchedEffect(listOpen, selected, pendingPrompt) {
+                if (listOpen || pendingPrompt.isNotBlank()) {
+                    eyeCardOpen = false
+                    balanceRequestSerial++
+                    stopBalanceVoice()
+                }
+            }
             LaunchedEffect(listOpen, settleVersion) {
                 val target = if (listOpen) 1f else 0f
                 drawerProgress.animateTo(target, DrawerMotion.settle)
@@ -617,10 +827,14 @@ class AgentActivity : ComponentActivity() {
                     Text("H.D.D Ⅲ · AGENT", color = YoukaiTokens.text, fontSize = 16.sp, fontWeight = FontWeight.Bold,
                         modifier = Modifier.align(Alignment.Center))
                     Row(Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically) {
-                        MessageAction(if (voiceAutoPlay) "speaker" else "mute", "切换自动播放", {
-                            voiceAutoPlay = !voiceAutoPlay
-                            settings.voiceAutoPlay = voiceAutoPlay
-                            if (!voiceAutoPlay) speechPlayer.stop()
+                        MessageAction(if (balanceVoiceEnabled) "speaker" else "mute", "切换余额语音", {
+                            balanceVoiceEnabled = !balanceVoiceEnabled
+                            settings.agentBalanceVoiceEnabled = balanceVoiceEnabled
+                            if (!balanceVoiceEnabled) stopBalanceVoice()
+                        }, YoukaiTokens.accent)
+                        MessageAction("folder", "电脑文件", {
+                            if (chosenWorkspace.isBlank()) { error = "请先选择电脑工作区" }
+                            else { fileDrawerOpen = true; loadFolder(chosenWorkspace, "") }
                         }, YoukaiTokens.accent)
                         MessageAction("plus", "新任务", {
                             newTask()
@@ -632,10 +846,33 @@ class AgentActivity : ComponentActivity() {
                     val eyeSize by androidx.compose.animation.core.animateDpAsState(if (hasConversation) 54.dp else 150.dp, tween(550), label = "agent eye size")
                     val eyeX by androidx.compose.animation.core.animateDpAsState(if (hasConversation) 0.dp else (maxWidth - eyeSize) / 2, tween(550), label = "agent eye x")
                     val eyeY by androidx.compose.animation.core.animateDpAsState(if (hasConversation) 28.dp else (maxHeight - eyeSize) / 2, tween(550), label = "agent eye y")
+                    val agentWorking = interruptedSession != selected && (pendingPrompt.isNotBlank() || liveText.isNotBlank() || sessions.any { it.id == selected && it.running })
                     if (tokenReady) AgentHoldEye(eyeSize, Modifier.offset(eyeX, eyeY)
                         .onGloballyPositioned { coordinates ->
                             modeSwitchOrigin = coordinates.positionInRoot() + Offset(coordinates.size.width / 2f, coordinates.size.height / 2f)
-                        }, pendingPrompt.isNotBlank()) { if (modeSwitchTrigger == 0) modeSwitchTrigger++ }
+                        }, agentWorking, eyeBlinkToken,
+                        onSwitch = { eyeCardOpen = false; stopBalanceVoice(); if (modeSwitchTrigger == 0) modeSwitchTrigger++ },
+                        onTap = {
+                            if (eyeCardOpen) {
+                                eyeCardOpen = false
+                                balanceRequestSerial++
+                                stopBalanceVoice()
+                            } else {
+                                eyeCardOpen = true
+                                balanceLoading = true
+                                accountBalance = null
+                                val serial = ++balanceRequestSerial
+                                scope.launch {
+                                    val result = withContext(Dispatchers.IO) { DeepSeekBalance.fetch(settings.apiKey()) }
+                                    if (eyeCardOpen && serial == balanceRequestSerial) {
+                                        accountBalance = result
+                                        balanceLoading = false
+                                        if (balanceVoiceEnabled && result.currency == "CNY" && result.amount != null)
+                                            playBalanceVoice(result.amount < BigDecimal.TEN)
+                                    }
+                                }
+                            }
+                        }, onDoubleTap = { eyeBlinkToken++ })
                     if (!tokenReady) {
                         Column(Modifier.align(Alignment.Center)) {
                             Text("请在隐私安全中设置电脑 Agent 访问令牌", color = YoukaiTokens.text)
@@ -647,7 +884,7 @@ class AgentActivity : ComponentActivity() {
                         Text(greetingForHour(LocalTime.now().hour), color = YoukaiTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.align(Alignment.Center).offset(y = eyeSize / 2 + 42.dp))
                     } else {
-                        Text(if (pendingPrompt.isNotBlank()) "●  YOUKAI // WORKING" else "●  YOUKAI // ONLINE",
+                        Text(if (agentWorking) "●  YOUKAI // WORKING" else "●  YOUKAI // ONLINE",
                             color = YoukaiTokens.accent, fontSize = 10.sp, fontFamily = FontFamily.Monospace,
                             modifier = Modifier.align(Alignment.TopStart).offset(x = 70.dp, y = 46.dp))
                         val scroll = rememberScrollState()
@@ -669,13 +906,11 @@ class AgentActivity : ComponentActivity() {
                             items.forEachIndexed { index, item ->
                                 if (item.kind == "user" || item.kind == "assistant") {
                                     ChatBubble(ChatMessage(item.kind, item.text), settings.displayName, settings.avatar,
-                                        false, false, false, playingIndex == index, false,
+                                        false, item.kind == "assistant" && interruptedSession == selected && interruptedText.isBlank() && index == items.indexOfLast { it.kind == "assistant" }, false, false, false,
                                         onCopy = { (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("DSH 消息", item.text)) },
-                                        onEdit = {}, onRegenerate = {}, onContinue = {},
-                                        onReplay = {
-                                            if (playingIndex == index) { speechPlayer.stop(); playingIndex = -1 }
-                                            else if (speechPlayer.play(settings.voiceEndpoint, settings.voiceToken(), item.text, index.toLong())) playingIndex = index
-                                        }, assistantName = "YOUKAI", showActions = item.kind == "assistant", eyeStyle = EyeStyle.YOUKAI)
+                                        onEdit = {}, onRegenerate = {}, onContinue = { submit("请继续执行刚才中断的任务，从已有进度接着完成。") },
+                                        onReplay = {}, assistantName = "YOUKAI", showActions = item.kind == "assistant",
+                                        eyeStyle = EyeStyle.YOUKAI, allowReplay = false)
                                 } else if (item.parentId.isBlank()) {
                                     val children = if (item.kind == "work") items.filter { it.parentId == item.id } else emptyList()
                                     AgentRecordCard(item, expanded[item.id], childCount = children.size,
@@ -700,8 +935,21 @@ class AgentActivity : ComponentActivity() {
                                 }, onCopy = { _, _ -> })
                             if (pendingPrompt.isNotBlank() || liveText.isNotBlank() || liveReasoning.isNotBlank())
                                 ChatBubble(ChatMessage("assistant", liveText), settings.displayName, settings.avatar, false, false, false, false, true, {}, {}, {}, {}, {}, showActions = false, assistantName = "YOUKAI", eyeStyle = EyeStyle.YOUKAI)
+                            if (interruptedSession == selected && interruptedText.isNotBlank())
+                                ChatBubble(ChatMessage("assistant", interruptedText), settings.displayName, settings.avatar,
+                                    false, true, false, false, false, {}, {}, {},
+                                    { submit("请继续执行刚才中断的任务，从已有进度接着完成。") }, {}, assistantName = "YOUKAI", eyeStyle = EyeStyle.YOUKAI, allowReplay = false)
+                            if (interruptedSession == selected && interruptedText.isBlank() && items.none { it.kind == "assistant" })
+                                Row(Modifier.fillMaxWidth().padding(start = 70.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text("任务已终止", color = YoukaiTokens.secondary, fontSize = 11.sp)
+                                    MessageAction("continue", "继续任务", { submit("请继续执行刚才中断的任务，从已有进度接着完成。") }, YoukaiTokens.accent)
+                                }
                         }
                         if (loadingHistory && loadedSession != selected) Box(Modifier.align(Alignment.Center)) { AgentHistoryLoading() }
+                    }
+                    if (eyeCardOpen) Box(Modifier.align(Alignment.TopStart).padding(top = 96.dp)) {
+                        EyeBalanceCard(accountBalance, balanceLoading, balanceClock,
+                            modifier = Modifier.fillMaxWidth(), eyeStyle = EyeStyle.YOUKAI)
                     }
                 }
                 if (error.isNotBlank()) Text(error, color = YoukaiTokens.accent, fontSize = 12.sp)
@@ -738,6 +986,13 @@ class AgentActivity : ComponentActivity() {
                         }
                     }
                 } else if (tokenReady) {
+                    if (pendingUploads.isNotEmpty()) Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        pendingUploads.forEach { upload ->
+                            Text("▣ ${upload.name}  ×", color = YoukaiTokens.accent, fontSize = 11.sp,
+                                modifier = Modifier.background(YoukaiTokens.raisedCard, RoundedCornerShape(8.dp))
+                                    .clickable { pendingUploads.remove(upload) }.padding(6.dp), maxLines = 1)
+                        }
+                    }
                     val composerShape = RoundedCornerShape(18.dp)
                     Row(Modifier.fillMaxWidth().shadow(if (draft.isNotBlank()) 9.dp else 4.dp, composerShape)
                         .background(YoukaiTokens.surface, composerShape)
@@ -748,14 +1003,19 @@ class AgentActivity : ComponentActivity() {
                             if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) voiceInput.prepare()
                             else requestMicrophone.launch(Manifest.permission.RECORD_AUDIO)
                         }, YoukaiTokens.accent)
+                        MessageAction("attach", "上传附件", {
+                            if (chosenWorkspace.isBlank()) error = "请先选择电脑工作区"
+                            else { attachOnUpload = true; openDocument.launch(arrayOf("*/*")) }
+                        }, YoukaiTokens.accent)
                         TextField(draft, { draft = it }, modifier = Modifier.weight(1f),
                             placeholder = { Text("向 Fairy 提问…", color = YoukaiTokens.secondary) },
                             colors = TextFieldDefaults.colors(focusedTextColor = YoukaiTokens.text, unfocusedTextColor = YoukaiTokens.text,
                                 cursorColor = YoukaiTokens.accent, focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
                                 focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
-                        MessageAction("send", "发送消息", {
-                            submit(draft)
-                        }, if (busy || draft.isBlank()) YoukaiTokens.secondary.copy(alpha = .6f) else YoukaiTokens.accent)
+                        val canStop = selected.isNotBlank() && interruptedSession != selected && (pendingPrompt.isNotBlank() || sessions.any { it.id == selected && it.running }) && draft.isBlank() && pendingUploads.isEmpty()
+                        MessageAction(if (canStop) "stop" else "send", if (canStop) "终止生成" else "发送消息", {
+                            if (canStop) cancelTask() else submit(draft)
+                        }, if (canStop || (!busy && (draft.isNotBlank() || pendingUploads.isNotEmpty()))) YoukaiTokens.accent else YoukaiTokens.secondary.copy(alpha = .6f))
                     }
                 }
             }
@@ -776,7 +1036,8 @@ class AgentActivity : ComponentActivity() {
                             HistorySessionSurface(session.id == selected, eyeStyle = EyeStyle.YOUKAI) {
                                 Text(session.title, color = if (session.id == selected) YoukaiTokens.accent else YoukaiTokens.text,
                                     maxLines = 2, modifier = Modifier.fillMaxWidth().clickable {
-                                        speechPlayer.stop(); items = emptyList(); loadedSession = ""; expanded.clear(); selected = session.id; listOpen = false; pendingPrompt = ""; liveText = ""; liveReasoning = ""
+                                        stopBalanceVoice(); eyeCardOpen = false; balanceRequestSerial++
+                                        items = emptyList(); loadedSession = ""; expanded.clear(); selected = session.id; listOpen = false; pendingPrompt = ""; liveText = ""; liveReasoning = ""
                                     }.padding(vertical = 8.dp))
                             }
                         }
@@ -785,6 +1046,56 @@ class AgentActivity : ComponentActivity() {
                         settingsOpenedFromDrawer = true
                         privacyLauncher.launch(android.content.Intent(this@AgentActivity, MainActivity::class.java).putExtra("open_settings_only", true))
                     }.padding(vertical = 16.dp))
+                }
+            }
+            val filesProgress by animateFloatAsState(if (fileDrawerOpen) 1f else 0f, tween(330), label = "computer files drawer")
+            if (filesProgress > .001f) {
+                Box(Modifier.fillMaxSize().background(YoukaiTokens.background.copy(alpha = .58f * filesProgress))
+                    .clickable { fileDrawerOpen = false; folder = null })
+                val filesWidth = maxWidth * .84f
+                Column(Modifier.align(Alignment.CenterEnd).offset(x = filesWidth * (1f - filesProgress))
+                    .width(filesWidth).fillMaxHeight().shadow(22.dp, RoundedCornerShape(topStart = 22.dp, bottomStart = 22.dp))
+                    .background(YoukaiTokens.surface, RoundedCornerShape(topStart = 22.dp, bottomStart = 22.dp))
+                    .border(1.dp, YoukaiTokens.pressedCardRim, RoundedCornerShape(topStart = 22.dp, bottomStart = 22.dp))
+                    .padding(16.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("电脑文件", color = YoukaiTokens.text, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                        MessageAction("plus", "上传到当前工作区", { attachOnUpload = false; openDocument.launch(arrayOf("*/*")) }, YoukaiTokens.accent)
+                        MessageAction("cancel", "关闭电脑文件", { fileDrawerOpen = false; folder = null }, YoukaiTokens.secondary)
+                    }
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        workspaces.forEach { workspace ->
+                            Text(workspace.title, color = if (workspace.id == chosenWorkspace) YoukaiTokens.text else YoukaiTokens.secondary,
+                                fontSize = 11.sp, maxLines = 1,
+                                modifier = Modifier.background(if (workspace.id == chosenWorkspace) YoukaiTokens.pressedCard else YoukaiTokens.raisedCard, RoundedCornerShape(9.dp))
+                                    .clickable { chosenWorkspace = workspace.id; loadFolder(workspace.id, "") }.padding(8.dp))
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("‹", color = if (folder?.parent != null) YoukaiTokens.accent else YoukaiTokens.secondary, fontSize = 26.sp,
+                            modifier = Modifier.clickable { folder?.parent?.let { loadFolder(chosenWorkspace, it) } }.padding(end = 12.dp))
+                        Text(if (folder?.path.isNullOrBlank()) "工作区根目录" else folder!!.path, color = YoukaiTokens.secondary,
+                            fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    if (folderLoading) androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth(), color = YoukaiTokens.accent)
+                    LazyColumn(Modifier.weight(1f)) {
+                        items(folder?.items.orEmpty(), key = { it.name }) { entry ->
+                            val path = listOfNotNull(folder?.path?.takeIf { it.isNotBlank() }, entry.name).joinToString("/")
+                            Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)
+                                .background(YoukaiTokens.raisedCard, RoundedCornerShape(11.dp))
+                                .clickable { if (entry.directory) loadFolder(chosenWorkspace, path) else previewFile(chosenWorkspace, path, entry.name) }
+                                .padding(start = 12.dp, top = 10.dp, bottom = 10.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(if (entry.directory) "▣" else "▤", color = YoukaiTokens.accent, fontSize = 15.sp)
+                                Text(entry.name, color = YoukaiTokens.text, fontSize = 12.sp, maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 8.dp))
+                                if (!entry.directory) Text("↓", color = YoukaiTokens.accent, fontSize = 18.sp,
+                                    modifier = Modifier.clickable {
+                                        pendingSave = chosenWorkspace to path
+                                        saveDocument.launch(entry.name)
+                                    }.padding(horizontal = 10.dp))
+                            }
+                        }
+                    }
                 }
             }
             if (voiceHolding && progress < .01f) {

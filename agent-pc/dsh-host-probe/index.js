@@ -2,9 +2,10 @@ import { createServer } from 'node:http'
 import { readFileSync } from 'node:fs'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
 import { HOST_MESSAGE_WINDOW, recentItems, findDetail } from './recent.js'
+import { listWorkspaceDirectory, uploadWorkspaceFile, downloadWorkspaceFile } from './workspace-files.js'
 
 export const name = 'hifairy-dsh-host-probe'
-export const inject = ['sessionController', 'workspaceRegistry', 'agentPresets']
+export const inject = ['sessionController', 'workspaceRegistry', 'agentPresets', 'fileUploads']
 
 function authorized(request, token) {
   const candidate = request.headers.authorization?.replace(/^Bearer /, '') ?? ''
@@ -47,6 +48,48 @@ export function createProbeServer(controller, token, options = {}) {
         })) })
       } catch (error) { return respond(response, 503, { error: 'modes_unavailable', detail: String(error?.message ?? error) }) }
     }
+    const parsed = new URL(request.url ?? '/', 'http://localhost')
+    const workspaceMatch = /^\/workspaces\/([a-zA-Z0-9_-]+)\/(files|upload|download)$/.exec(parsed.pathname)
+    if (workspaceMatch) {
+      const [, workspaceId, action] = workspaceMatch
+      try {
+        if (request.method === 'GET' && action === 'files')
+          return respond(response, 200, await listWorkspaceDirectory(options.workspaceRegistry, workspaceId, parsed.searchParams.get('path') ?? ''))
+        if (request.method === 'POST' && action === 'upload')
+          return respond(response, 201, await uploadWorkspaceFile(options.workspaceRegistry, workspaceId,
+            parsed.searchParams.get('path') ?? '', parsed.searchParams.get('name') ?? '', request))
+        if (request.method === 'GET' && action === 'download') {
+          const file = await downloadWorkspaceFile(options.workspaceRegistry, workspaceId, parsed.searchParams.get('path') ?? '')
+          response.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': file.bytes,
+            'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`, 'Cache-Control': 'no-store' })
+          file.stream.pipe(response)
+          return
+        }
+        return respond(response, 405, { error: 'method_not_allowed' })
+      } catch (error) { return respond(response, 400, { error: String(error?.message ?? error) }) }
+    }
+    const cancelMatch = /^\/sessions\/(session-[a-z0-9-]+)\/cancel$/.exec(request.url ?? '')
+    if (request.method === 'POST' && cancelMatch) {
+      try { controller.cancel({ sessionId: cancelMatch[1] }); return respond(response, 200, { cancelled: true }) }
+      catch (error) { return respond(response, 503, { error: 'cancel_failed', detail: String(error?.message ?? error) }) }
+    }
+    const attachmentMatch = /^\/sessions\/(session-[a-z0-9-]+)\/attachments$/.exec(parsed.pathname)
+    if (request.method === 'POST' && attachmentMatch) {
+      try {
+        const name = parsed.searchParams.get('name') || 'attachment'
+        if (name.length > 180 || name.includes('/') || name.includes('\\')) return respond(response, 400, { error: 'invalid_filename' })
+        let bytes = 0
+        const data = (async function* () {
+          for await (const chunk of request) {
+            bytes += chunk.length
+            if (bytes > 25 * 1024 * 1024) throw new Error('upload_too_large')
+            yield chunk
+          }
+        })()
+        const result = await options.fileUploads.uploadStream({ sessionId: attachmentMatch[1], name, data })
+        return respond(response, 201, { receiptId: result.receiptId, name })
+      } catch (error) { return respond(response, 400, { error: String(error?.message ?? error) }) }
+    }
     if (request.method === 'POST' && request.url === '/sessions') {
       try {
         const body = await readJson(request)
@@ -67,13 +110,19 @@ export function createProbeServer(controller, token, options = {}) {
     if (request.method === 'POST' && promptMatch) {
       try {
         const body = await readJson(request)
-        if (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 8000)
+        if (typeof body.text !== 'string' || body.text.length > 8000 || !Array.isArray(body.attachments ?? [])
+            || body.attachments?.length > 5 || (!body.text.trim() && !body.attachments?.length))
           return respond(response, 400, { error: 'invalid_text' })
         const sessionId = promptMatch[1]
         const listed = await controller.list({}, AbortSignal.timeout(5000))
         if (!listed.items.some(item => item.sessionId === sessionId)) return respond(response, 404, { error: 'session_not_found' })
         const requestId = randomUUID()
-        await controller.prompt({ requestId, sessionId, mode: 'queue', content: [{ type: 'text', text: body.text }] }, AbortSignal.timeout(10000))
+        const receipts = (body.attachments ?? []).map(value => {
+          if (typeof value !== 'string' || !/^[a-zA-Z0-9-]{12,80}$/.test(value)) throw new Error('invalid_receipt')
+          return { type: 'file', receiptId: value }
+        })
+        const content = [...(body.text.trim() ? [{ type: 'text', text: body.text }] : []), ...receipts]
+        await controller.prompt({ requestId, sessionId, mode: 'queue', content }, AbortSignal.timeout(10000))
         return respond(response, 202, { sessionId, requestId })
       } catch (error) {
         return respond(response, 503, { error: 'host_unavailable', detail: String(error?.message ?? error) })
@@ -165,7 +214,8 @@ export function apply(ctx, config) {
   const token = readFileSync(config.tokenFile, 'utf8').trim()
   if (token.length < 32) throw new Error('HiFairy probe token must contain at least 32 characters')
   const server = createProbeServer(ctx.sessionController, token, {
-    workspaceId: config.workspaceId, workspaceRegistry: ctx.workspaceRegistry, agentPresets: ctx.agentPresets
+    workspaceId: config.workspaceId, workspaceRegistry: ctx.workspaceRegistry, agentPresets: ctx.agentPresets,
+    fileUploads: ctx.fileUploads
   })
   ctx.effect(() => {
     server.listen(config.port ?? 18765, '127.0.0.1')

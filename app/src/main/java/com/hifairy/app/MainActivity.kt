@@ -204,9 +204,9 @@ private object ThemeDimensions {
 }
 
 internal fun greetingForHour(hour: Int): String = when (hour) {
-    in 5..11 -> "早上好，主人"
-    in 12..17 -> "下午好，主人"
-    else -> "晚上好，主人"
+    in 5..11 -> "早上好，法厄同"
+    in 12..17 -> "下午好，法厄同"
+    else -> "晚上好，法厄同"
 }
 
 private fun greetingAudioForHour(hour: Int): Int = when (hour) {
@@ -358,6 +358,15 @@ private fun ActionGlyph(kind: String, color: Color, modifier: Modifier = Modifie
             "stop" -> drawRoundRect(color, Offset(4f * unit, 4f * unit), Size(12f * unit, 12f * unit), CornerRadius(2f * unit))
             "menu" -> { line(3f, 5f, 17f, 5f); line(3f, 10f, 17f, 10f); line(3f, 15f, 17f, 15f) }
             "plus" -> { line(10f, 3f, 10f, 17f); line(3f, 10f, 17f, 10f) }
+            "folder" -> {
+                line(2f, 5f, 8f, 5f); line(8f, 5f, 10f, 7f); line(10f, 7f, 18f, 7f)
+                line(18f, 7f, 18f, 17f); line(18f, 17f, 2f, 17f); line(2f, 17f, 2f, 5f)
+            }
+            "attach" -> {
+                line(7f, 5f, 7f, 14f); line(7f, 14f, 10f, 17f); line(10f, 17f, 15f, 17f)
+                line(15f, 17f, 18f, 14f); line(18f, 14f, 18f, 6f); line(18f, 6f, 15f, 3f)
+                line(15f, 3f, 12f, 6f); line(12f, 6f, 12f, 14f)
+            }
             "copy" -> {
                 line(3f, 13f, 3f, 3f); line(3f, 3f, 13f, 3f); line(13f, 3f, 13f, 5f)
                 line(7f, 7f, 17f, 7f); line(17f, 7f, 17f, 17f)
@@ -439,39 +448,44 @@ internal fun FairyOnlineStatus(active: Boolean, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun EyeBalanceCard(balance: AccountBalance?, loading: Boolean, now: Instant, modifier: Modifier = Modifier) {
+internal fun EyeBalanceCard(balance: AccountBalance?, loading: Boolean, now: Instant, modifier: Modifier = Modifier, eyeStyle: EyeStyle = EyeStyle.FAIRY) {
+    val agent = eyeStyle == EyeStyle.YOUKAI
+    val surface = if (agent) YoukaiTokens.surface else ThemeTokens.surface
+    val accent = if (agent) YoukaiTokens.accent else ThemeTokens.accent
+    val secondary = if (agent) YoukaiTokens.secondary else ThemeTokens.secondary
+    val textColor = if (agent) YoukaiTokens.text else ThemeTokens.text
     val tariff = PeakTariff.current(now)
     val remaining = tariff?.let { Duration.between(now, it.nextAt).seconds.coerceAtLeast(0) }
     val clock = remaining?.let { String.format(Locale.US, "%02d:%02d:%02d", it / 3600, it / 60 % 60, it % 60) }
     val badgeColor = if (tariff?.peak == true) Color(0xFFF0A13A) else Color(0xFF3ED873)
     val shape = RoundedCornerShape(17.dp)
     Column(modifier.shadow(15.dp, shape, ambientColor = Color(0xCC030616), spotColor = Color(0xCC030616))
-        .background(ThemeTokens.surface, shape).border(1.dp, Color(0xFF4B6192), shape)
+        .background(surface, shape).border(1.dp, if (agent) YoukaiTokens.pressedCardRim else Color(0xFF4B6192), shape)
         .padding(horizontal = 16.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-        Text("FAIRY // ENERGY STATUS", color = ThemeTokens.accent, fontSize = 10.sp,
+        Text(if (agent) "YOUKAI // ENERGY STATUS" else "FAIRY // ENERGY STATUS", color = accent, fontSize = 10.sp,
             fontFamily = TypeTokens.terminalFont, letterSpacing = TypeTokens.eyebrowTracking)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("账户余额", color = ThemeTokens.secondary, fontSize = 13.sp)
+            Text("账户余额", color = secondary, fontSize = 13.sp)
             Text(when {
                 loading -> "读取中…"
                 balance?.amount != null -> "${if (balance.currency == "CNY") "¥" else "${balance.currency} "}${balance.amount.stripTrailingZeros().toPlainString()}"
                 else -> "—"
-            }, color = ThemeTokens.text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.terminalFont)
+            }, color = textColor, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, fontFamily = TypeTokens.terminalFont)
         }
-        if (balance?.error != null && !loading) Text(balance.error, color = ThemeTokens.secondary, fontSize = 11.sp)
-        Spacer(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF344363)))
+        if (balance?.error != null && !loading) Text(balance.error, color = secondary, fontSize = 11.sp)
+        Spacer(Modifier.fillMaxWidth().height(1.dp).background(if (agent) YoukaiTokens.pressedCardRim else Color(0xFF344363)))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(if (tariff == null) "—" else if (tariff.peak) "峰" else "谷", color = ThemeTokens.background, fontSize = 12.sp,
+            Text(if (tariff == null) "—" else if (tariff.peak) "峰" else "谷", color = if (agent) YoukaiTokens.background else ThemeTokens.background, fontSize = 12.sp,
                 modifier = Modifier.background(badgeColor, RoundedCornerShape(5.dp)).padding(horizontal = 5.dp, vertical = 2.dp))
             Text(if (clock != null) "${clock} 后转${if (tariff?.peak == true) "谷" else "峰"}价" else "峰谷时段资料待更新",
                 color = badgeColor, fontSize = 12.sp, fontFamily = TypeTokens.terminalFont)
         }
-        Text("峰  工作日 09–12、14–18  ·  谷  其余时段", color = ThemeTokens.secondary, fontSize = 10.sp)
+        Text("峰  工作日 09–12、14–18  ·  谷  其余时段", color = secondary, fontSize = 10.sp)
     }
 }
 
 @Composable
-internal fun ChatBubble(message: ChatMessage, displayName: String, avatar: String, showRegenerate: Boolean, showContinue: Boolean, showEdit: Boolean, playing: Boolean, animateEntrance: Boolean, onCopy: () -> Unit, onEdit: () -> Unit, onRegenerate: () -> Unit, onContinue: () -> Unit, onReplay: () -> Unit, showActions: Boolean = true, assistantName: String = "Fairy", eyeStyle: EyeStyle = EyeStyle.FAIRY) {
+internal fun ChatBubble(message: ChatMessage, displayName: String, avatar: String, showRegenerate: Boolean, showContinue: Boolean, showEdit: Boolean, playing: Boolean, animateEntrance: Boolean, onCopy: () -> Unit, onEdit: () -> Unit, onRegenerate: () -> Unit, onContinue: () -> Unit, onReplay: () -> Unit, showActions: Boolean = true, assistantName: String = "Fairy", eyeStyle: EyeStyle = EyeStyle.FAIRY, allowReplay: Boolean = true) {
     val isUser = message.role == "user"
     val context = LocalContext.current
     var reasoningExpanded by remember { mutableStateOf(false) }
@@ -527,7 +541,7 @@ internal fun ChatBubble(message: ChatMessage, displayName: String, avatar: Strin
             }
             if (!isUser && showActions && (message.content.isNotBlank() || showContinue)) Row(verticalAlignment = Alignment.CenterVertically) {
                 if (message.content.isNotBlank()) MessageAction("copy", "复制回答", onCopy, if (eyeStyle == EyeStyle.YOUKAI) YoukaiTokens.secondary else ThemeTokens.secondary)
-                if (message.content.isNotBlank()) MessageAction(if (playing) "mute" else "speaker", if (playing) "停止播放" else "重听回答", onReplay, if (eyeStyle == EyeStyle.YOUKAI) (if (playing) YoukaiTokens.accent else YoukaiTokens.secondary) else (if (playing) ThemeTokens.accent else ThemeTokens.secondary))
+                if (message.content.isNotBlank() && allowReplay) MessageAction(if (playing) "mute" else "speaker", if (playing) "停止播放" else "重听回答", onReplay, if (eyeStyle == EyeStyle.YOUKAI) (if (playing) YoukaiTokens.accent else YoukaiTokens.secondary) else (if (playing) ThemeTokens.accent else ThemeTokens.secondary))
                 if (showRegenerate) MessageAction("retry", "重新生成回答", onRegenerate)
                 if (showContinue) Row(Modifier.clickable(onClickLabel = "继续生成回答", onClick = onContinue).padding(horizontal = 6.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
                     ActionGlyph("continue", ThemeTokens.accent)
