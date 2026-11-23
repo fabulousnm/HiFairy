@@ -103,6 +103,11 @@ private data class AgentFile(val name: String, val directory: Boolean)
 private data class AgentFolder(val path: String, val parent: String?, val items: List<AgentFile>)
 private data class AgentUpload(val name: String, val path: String)
 private data class AgentPendingAttachment(val name: String, val uri: Uri)
+private fun youkaiGreetingForHour(hour: Int): String = when (hour) {
+    in 5..11 -> "早上好，法厄同"
+    in 12..17 -> "下午好，法厄同"
+    else -> "晚上好，法厄同"
+}
 
 private fun agentConnectionError(error: Exception): String =
     if (error is java.net.SocketTimeoutException || error.message?.contains("timeout", ignoreCase = true) == true)
@@ -444,6 +449,19 @@ class AgentActivity : ComponentActivity() {
         player.start()
     }
 
+    private fun playYoukaiGreeting() {
+        stopBalanceVoice()
+        val resource = when (LocalTime.now().hour) {
+            in 5..11 -> R.raw.youkai_greet_morning
+            in 12..17 -> R.raw.youkai_greet_afternoon
+            else -> R.raw.youkai_greet_evening
+        }
+        balancePlayer = MediaPlayer.create(this, resource)?.apply {
+            setOnCompletionListener { stopBalanceVoice() }
+            start()
+        }
+    }
+
     override fun onPause() {
         stopBalanceVoice()
         super.onPause()
@@ -557,6 +575,10 @@ class AgentActivity : ComponentActivity() {
             var voiceStatus by remember { mutableStateOf("") }
             var voiceLevel by remember { mutableFloatStateOf(0f) }
             var balanceVoiceEnabled by remember { mutableStateOf(settings.agentBalanceVoiceEnabled) }
+            LaunchedEffect(Unit) {
+                delay(760)
+                if (balanceVoiceEnabled && selected.isBlank()) playYoukaiGreeting()
+            }
             var eyeCardOpen by remember { mutableStateOf(false) }
             var balanceLoading by remember { mutableStateOf(false) }
             var accountBalance by remember { mutableStateOf<AccountBalance?>(null) }
@@ -881,7 +903,7 @@ class AgentActivity : ComponentActivity() {
                                     contentColor = YoukaiTokens.text)) { Text("打开设置") }
                         }
                     } else if (selected.isBlank()) {
-                        Text(greetingForHour(LocalTime.now().hour), color = YoukaiTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold,
+                        Text(youkaiGreetingForHour(LocalTime.now().hour), color = YoukaiTokens.text, fontSize = 24.sp, fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.align(Alignment.Center).offset(y = eyeSize / 2 + 42.dp))
                     } else {
                         Text(if (agentWorking) "●  YOUKAI // WORKING" else "●  YOUKAI // ONLINE",
@@ -1008,7 +1030,7 @@ class AgentActivity : ComponentActivity() {
                             else { attachOnUpload = true; openDocument.launch(arrayOf("*/*")) }
                         }, YoukaiTokens.accent)
                         TextField(draft, { draft = it }, modifier = Modifier.weight(1f),
-                            placeholder = { Text("向 Fairy 提问…", color = YoukaiTokens.secondary) },
+                            placeholder = { Text("向 YOUKAI 提问…", color = YoukaiTokens.secondary) },
                             colors = TextFieldDefaults.colors(focusedTextColor = YoukaiTokens.text, unfocusedTextColor = YoukaiTokens.text,
                                 cursorColor = YoukaiTokens.accent, focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
                                 focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))

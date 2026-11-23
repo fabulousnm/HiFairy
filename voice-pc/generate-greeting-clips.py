@@ -1,4 +1,4 @@
-"""Regenerate the bundled Fairy time-of-day greetings from one warmed model."""
+"""Regenerate the bundled YOUKAI greeting clips from the Fairy voice model."""
 
 from pathlib import Path
 
@@ -9,9 +9,9 @@ from fairy_runtime import build_request, load_pipeline
 
 
 GREETINGS = {
-    "fairy_greet_morning.wav": "早上好，法厄同。",
-    "fairy_greet_afternoon.wav": "下午好，法厄同。",
-    "fairy_greet_evening.wav": "晚上好，法厄同。",
+    "youkai_greet_morning.wav": "早上好，法厄同。",
+    "youkai_greet_afternoon.wav": "下午好，法厄同。",
+    "youkai_greet_evening.wav": "晚上好，法厄同。",
 }
 
 

@@ -204,9 +204,9 @@ private object ThemeDimensions {
 }
 
 internal fun greetingForHour(hour: Int): String = when (hour) {
-    in 5..11 -> "早上好，法厄同"
-    in 12..17 -> "下午好，法厄同"
-    else -> "晚上好，法厄同"
+    in 5..11 -> "早上好，主人"
+    in 12..17 -> "下午好，主人"
+    else -> "晚上好，主人"
 }
 
 private fun greetingAudioForHour(hour: Int): Int = when (hour) {

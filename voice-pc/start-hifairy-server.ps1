@@ -17,9 +17,9 @@ $tunnelLog = Join-Path $output 'tunnel-launch.log'
 $tunnelError = Join-Path $output 'tunnel-launch-error.log'
 $localHealth = 'http://127.0.0.1:8765/health'
 
-function Test-Health([string]$url) {
+function Test-Health([string]$url, [int]$timeoutSeconds = 8) {
     try {
-        $result = Invoke-RestMethod -Uri $url -TimeoutSec 8
+        $result = Invoke-RestMethod -Uri $url -TimeoutSec $timeoutSeconds
         return $result.ready -eq $true
     } catch { return $false }
 }
@@ -69,7 +69,7 @@ if (-not $StatusOnly) {
     }
     Write-Host 'Fairy 模型服务已就绪。'
     $url = Find-TunnelUrl
-    if (-not $url -or -not (Test-Health "$url/health") -or -not (Test-AgentBridge $url)) {
+    if (-not $url -or -not (Test-Health "$url/health" 4)) {
         Write-Host '正在启动临时公网通道…'
         # A stale connector may keep the old log handle open while its health page
         # still answers. Stop only this project's tunnel before replacing its log.
@@ -84,14 +84,15 @@ if (-not $StatusOnly) {
         for ($i = 0; $i -lt 30; $i++) {
             Start-Sleep -Seconds 2
             $candidate = Find-TunnelUrl
-            if ($candidate -and (Test-Health "$candidate/health") -and (Test-AgentBridge $candidate)) { $url = $candidate; break }
+            if ($candidate -and (Test-Health "$candidate/health" 4)) { $url = $candidate; break }
+            if ($i -gt 0 -and $i % 5 -eq 0) { Write-Host "公网通道仍在建立（已等待约 $($i * 2) 秒）…" }
         }
         if (-not $url) { throw "公网通道未在 60 秒内就绪。查看 $tunnelError" }
     }
 } else {
     if (-not (Test-Health $localHealth)) { throw '本地 Fairy 服务尚未启动。' }
     $url = Find-TunnelUrl
-    if (-not $url -or -not (Test-Health "$url/health") -or -not (Test-AgentBridge $url)) { throw '公网通道尚未就绪。' }
+    if (-not $url -or -not (Test-Health "$url/health" 4)) { throw '公网通道尚未就绪。' }
 }
 
 if (-not (Test-Path -LiteralPath $tokenFile)) { throw "令牌文件不存在：$tokenFile" }
@@ -104,4 +105,9 @@ Write-Host "语音服务地址：$socketUrl" -ForegroundColor Green
 Write-Host "访问令牌：$token" -ForegroundColor Yellow
 Write-Host "Agent 地址：$url/agent" -ForegroundColor Green
 Write-Host "Agent 令牌：$([IO.File]::ReadAllText($agentTokenFile).Trim())" -ForegroundColor Yellow
+if (Test-AgentBridge $url) {
+    Write-Host 'Agent 桥接已就绪。' -ForegroundColor Green
+} else {
+    Write-Warning 'Agent 桥接暂不可用；语音服务与公网地址仍可使用。请启动 DSH Desktop 后再次运行本脚本检查 Agent。'
+}
 Write-Host '服务与通道在后台运行；Quick Tunnel 地址在重新建立后可能改变。'
