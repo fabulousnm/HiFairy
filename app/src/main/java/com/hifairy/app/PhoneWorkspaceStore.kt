@@ -70,9 +70,17 @@ internal class PhoneWorkspaceStore(private val context: Context) {
         val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, id)
         val page = mutableListOf<String>()
         var count = 0
+        var pageChars = 0
+        var pageFull = false
         resolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { cursor ->
             while (cursor.moveToNext()) {
-                if (count >= offset && page.size < 80) page.add(cursor.getString(0).take(120))
+                if (count >= offset && page.size < 80 && !pageFull) {
+                    val name = cursor.getString(0)
+                    if (page.isEmpty() || pageChars + name.length + 1 <= 12000) {
+                        page.add(name)
+                        pageChars += name.length + 1
+                    } else pageFull = true
+                }
                 count++
             }
         } ?: error("无法列目录")
