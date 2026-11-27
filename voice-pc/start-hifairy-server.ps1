@@ -110,6 +110,15 @@ try {
         Start-Sleep -Seconds 2
     }
     if (-not $ready) { throw "本地服务未就绪；查看 $serverErr" }
+    if ($Mode -eq 'Gateway') {
+        try {
+            $agentToken = [IO.File]::ReadAllText($agentTokenFile).Trim()
+            $bridge = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/agent/sessions" -Headers @{Authorization="Bearer $agentToken"} -TimeoutSec 5
+            if ($null -eq $bridge.items) { throw 'Agent 桥接响应无会话目录' }
+        } catch {
+            throw 'DSH Desktop 尚未启动或 Agent 桥接不可用。请先打开 DSH Desktop，再重新选择模式 2；本次服务会自动清理。'
+        }
+    }
     Write-Host '正在启动临时公网通道…'
     $tunnel = Start-Process -FilePath $cloudflared `
         -ArgumentList @('tunnel','--url',"http://127.0.0.1:$Port",'--protocol','http2','--no-autoupdate') `
