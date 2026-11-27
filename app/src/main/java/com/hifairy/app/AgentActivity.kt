@@ -519,6 +519,7 @@ class AgentActivity : ComponentActivity() {
             var computerPathDraft by remember { mutableStateOf("") }
             var folder by remember { mutableStateOf<AgentFolder?>(null) }
             var folderLoading by remember { mutableStateOf(false) }
+            var folderError by remember { mutableStateOf("") }
             var folderWorkspace by remember { mutableStateOf("") }
             var folderRequestSerial by remember { mutableIntStateOf(0) }
             var attachOnUpload by remember { mutableStateOf(false) }
@@ -709,6 +710,7 @@ class AgentActivity : ComponentActivity() {
 
             fun loadFolder(workspaceId: String, path: String) {
                 folderLoading = true
+                folderError = ""
                 folder = null // Release the previous directory before requesting the next one.
                 folderWorkspace = workspaceId
                 val serial = ++folderRequestSerial
@@ -720,7 +722,10 @@ class AgentActivity : ComponentActivity() {
                             if (workspaceId.isBlank()) computerPathDraft = result.path
                             error = ""
                         }
-                    } catch (e: Exception) { error = e.message ?: "读取目录失败" }
+                    } catch (e: Exception) {
+                        if (serial == folderRequestSerial) folderError = if (e.message?.contains("404") == true)
+                            "电脑文件接口未加载，请重启电脑上的 DSH 后重试" else agentConnectionError(e)
+                    }
                     finally { if (serial == folderRequestSerial) folderLoading = false }
                 }
             }
@@ -1199,6 +1204,9 @@ class AgentActivity : ComponentActivity() {
                             fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     if (folderLoading) androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth(), color = YoukaiTokens.accent)
+                    if (folderError.isNotBlank()) Text(folderError, color = YoukaiTokens.accent, fontSize = 12.sp,
+                        modifier = Modifier.fillMaxWidth().clickable { loadFolder(if (browseComputer) "" else chosenWorkspace, if (browseComputer) computerPathDraft else "") }
+                            .padding(vertical = 12.dp))
                     LazyColumn(Modifier.weight(1f)) {
                         items(folder?.items.orEmpty(), key = { it.name }) { entry ->
                             val path = if (browseComputer && folder?.path.isNullOrBlank()) entry.name
