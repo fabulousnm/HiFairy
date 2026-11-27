@@ -12,6 +12,7 @@
         <receiver android:name=".AgentApprovalReceiver" android:exported="false" />
         <service android:name=".AgentMonitorService" android:exported="false" android:foregroundServiceType="remoteMessaging" />
         <activity android:name=".PrivacySettingsActivity" android:exported="false" />
+        <activity android:name=".PhoneWorkspaceSettingsActivity" android:exported="false" />
         <activity android:name=".MainActivity" android:exported="true" android:configChanges="orientation|screenSize">
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
         </activity>

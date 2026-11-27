@@ -2,6 +2,47 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createProbeServer } from './index.js'
 
+test('phone workspace probe is delivered only to the active session and returns its result', async () => {
+  const token = 'p'.repeat(40)
+  const options = {}
+  const controller = { follow(_input, signal) {
+    return (async function* () {
+      yield { type: 'snapshot', cursor: 1 }
+      await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }))
+    })()
+  } }
+  const server = createProbeServer(controller, token, options)
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const base = `http://127.0.0.1:${server.address().port}`
+  const headers = { Authorization: `Bearer ${token}` }
+  const abort = new AbortController()
+  try {
+    assert.match((await options.phoneWorkspace.offer('session-other')).text, /没有打开/)
+    const stream = await fetch(`${base}/sessions/session-test/events`, { headers, signal: abort.signal })
+    assert.equal(stream.status, 200)
+    const reader = stream.body.getReader()
+    const first = await reader.read()
+    assert.match(new TextDecoder().decode(first.value), /snapshot/)
+    const waiting = options.phoneWorkspace.offer('session-test')
+    const frame = await reader.read()
+    const match = new TextDecoder().decode(frame.value).match(/"id":"([a-f0-9-]{36})"/)
+    assert.ok(match)
+    const invalid = await fetch(`${base}/sessions/session-other/phone-workspace-result`, {
+      method: 'POST', headers, body: JSON.stringify({ id: match[1], text: 'wrong session' })
+    })
+    assert.equal(invalid.status, 400)
+    const accepted = await fetch(`${base}/sessions/session-test/phone-workspace-result`, {
+      method: 'POST', headers, body: JSON.stringify({ id: match[1], text: 'probe ok' })
+    })
+    assert.equal(accepted.status, 200)
+    assert.deepEqual(await waiting, { text: 'probe ok' })
+    await reader.cancel()
+  } finally {
+    abort.abort()
+    await new Promise(resolve => server.close(resolve))
+  }
+})
+
 test('only an authenticated request can read Host session summaries', async () => {
   let calls = 0
   const server = createProbeServer({ async list() { calls++; return { items: [{ sessionId: 'one', projections: { values: { title: 'Test' } }, cwd: 'D:\\workspace', secret: 'hidden' }, { sessionId: 'blank', blank: true }] } } }, 'a'.repeat(40))

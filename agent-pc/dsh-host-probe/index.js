@@ -6,7 +6,7 @@ import { listWorkspaceDirectory, uploadWorkspaceFile, downloadWorkspaceFile,
   listComputerRoots, listComputerDirectory, uploadComputerFile, downloadComputerFile } from './workspace-files.js'
 
 export const name = 'hifairy-dsh-host-probe'
-export const inject = ['sessionController', 'workspaceRegistry', 'agentPresets', 'fileUploads', 'sessions', 'permissionPresets']
+export const inject = ['sessionController', 'workspaceRegistry', 'agentPresets', 'fileUploads', 'sessions', 'permissionPresets', 'tools']
 
 function authorized(request, token) {
   const candidate = request.headers.authorization?.replace(/^Bearer /, '') ?? ''
@@ -33,6 +33,24 @@ export function createProbeServer(controller, token, options = {}) {
   const subscribers = new Map()
   const clients = new Map()
   const approvals = new Map()
+  const phoneRequests = new Map()
+  const phoneWorkspace = {
+    offer(sessionId) {
+      const active = clients.get(sessionId)
+      if (!active?.size) return Promise.resolve({ text: '手机当前没有打开该 Agent 会话，无法执行手机工作区测试。' })
+      const id = randomUUID()
+      return new Promise(resolve => {
+        const timer = setTimeout(() => {
+          phoneRequests.delete(id)
+          resolve({ text: '手机工作区请求超时。请保持该 Agent 会话在手机前台。' })
+        }, 30000)
+        phoneRequests.set(id, { sessionId, resolve, timer })
+        const frame = `data: ${JSON.stringify({ type: 'phone-workspace-request', id, action: 'probe' })}\n\n`
+        for (const client of active) client.write(frame)
+      })
+    }
+  }
+  options.phoneWorkspace = phoneWorkspace
   const approvalBridge = {
     hasSubscriber: id => (subscribers.get(id) ?? 0) > 0,
     offer(request, next) {
@@ -82,6 +100,19 @@ export function createProbeServer(controller, token, options = {}) {
       catch (error) { return respond(response, 503, { error: 'permissions_unavailable', detail: String(error?.message ?? error) }) }
     }
     const parsed = new URL(request.url ?? '/', 'http://localhost')
+    const phoneResultMatch = /^\/sessions\/(session-[a-z0-9-]+)\/phone-workspace-result$/.exec(parsed.pathname)
+    if (phoneResultMatch && request.method === 'POST') {
+      try {
+        const body = await readJson(request)
+        const pending = phoneRequests.get(body.id)
+        if (!pending || pending.sessionId !== phoneResultMatch[1] || typeof body.text !== 'string' || body.text.length > 4000)
+          return respond(response, 400, { error: 'invalid_phone_result' })
+        clearTimeout(pending.timer)
+        phoneRequests.delete(body.id)
+        pending.resolve({ text: body.text })
+        return respond(response, 200, { accepted: true })
+      } catch (error) { return respond(response, 400, { error: String(error?.message ?? error) }) }
+    }
     const approvalMatch = /^\/sessions\/(session-[a-z0-9-]+)\/approvals(?:\/([a-zA-Z0-9-]+))?$/.exec(parsed.pathname)
     if (approvalMatch) {
       const [ , sessionId, id ] = approvalMatch
@@ -282,6 +313,11 @@ export function createProbeServer(controller, token, options = {}) {
           subscribers.delete(sessionId)
           clients.delete(sessionId)
           for (const pending of [...approvals.values()].filter(item => item.sessionId === sessionId)) pending.done('delegate')
+          for (const [id, pending] of phoneRequests) if (pending.sessionId === sessionId) {
+            clearTimeout(pending.timer)
+            phoneRequests.delete(id)
+            pending.resolve({ text: '手机已离开该会话，工作区请求取消。' })
+          }
         }
         response.end()
       }
@@ -314,4 +350,17 @@ export function apply(ctx, config) {
     return () => server.close()
   })
   ctx.on('approval/request', (request, next) => bridgeOptions.approvalBridge.offer(request, next), true)
+  ctx.effect(() => ctx.tools.register({
+    name: 'hifairy_phone_workspace_probe',
+    description: '用户明确要求测试手机本地挂载工作区时使用。仅在当前手机 Agent 会话前台执行：列出少量文件名、拒绝越界路径，并创建和覆盖一个 HiFairy-agent-test- 前缀的测试文本。不会修改其他文件。',
+    parameters: { type: 'object', properties: {}, additionalProperties: false },
+    output: { schema: { type: 'object', properties: { text: { type: 'string', required: true } }, additionalProperties: false },
+      render: (_args, value) => [{ type: 'text', text: value.text }] },
+    timeoutMs: 35000,
+    execute: (_args, exec) => {
+      const sessionId = exec?.agent?.session?.id
+      if (!sessionId) return { text: '无法识别当前 DSH 会话。' }
+      return bridgeOptions.phoneWorkspace.offer(sessionId)
+    }
+  }))
 }

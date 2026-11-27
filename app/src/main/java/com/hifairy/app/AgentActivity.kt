@@ -114,7 +114,7 @@ class AgentApprovalReceiver : BroadcastReceiver() {
         val pending = goAsync()
         Thread {
             try {
-                val api = AgentConnection(SecureSettings(context))
+                val api = AgentConnection(SecureSettings(context), context)
                 try { api.decideApproval(session, approval, allow) } finally { api.close() }
             } catch (_: Exception) { }
             finally { pending.finish() }
@@ -311,7 +311,8 @@ private fun AgentHoldEye(size: androidx.compose.ui.unit.Dp, modifier: Modifier =
     }
 }
 
-internal class AgentConnection(private val settings: SecureSettings) {
+internal class AgentConnection(private val settings: SecureSettings, private val context: android.content.Context,
+                               private val allowPhoneWorkspace: Boolean = false) {
     private val socketClient = OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS).build()
     @Volatile private var followSocket: WebSocket? = null
     private val base: String
@@ -385,6 +386,17 @@ internal class AgentConnection(private val settings: SecureSettings) {
         request("/sessions/$sessionId/approvals/$approvalId", "POST",
             JSONObject().put("outcome", if (allow) "allowed-once" else "rejected").toString())
     }
+    private fun answerPhoneWorkspace(sessionId: String, frame: JSONObject) {
+        val id = frame.optString("id")
+        if (!id.matches(Regex("[a-f0-9-]{36}")) || frame.optString("action") != "probe") return
+        Thread {
+            val result = PhoneWorkspaceStore(context).probe()
+            runCatching {
+                request("/sessions/$sessionId/phone-workspace-result", "POST",
+                    JSONObject().put("id", id).put("text", result).toString())
+            }
+        }.start()
+    }
     fun send(id: String, text: String, receipts: List<String> = emptyList()) {
         val body = JSONObject().put("text", text).put("attachments", org.json.JSONArray(receipts))
         request("/sessions/$id/messages", "POST", body.toString())
@@ -454,7 +466,13 @@ internal class AgentConnection(private val settings: SecureSettings) {
                 webSocket.send(JSONObject().put("token", settings.agentToken()).toString())
             }
             override fun onMessage(webSocket: WebSocket, text: String) {
-                try { onFrame(JSONObject(text)) } catch (error: Exception) {
+                try {
+                    val frame = JSONObject(text)
+                    if (frame.optString("type") == "phone-workspace-request") {
+                        if (allowPhoneWorkspace) answerPhoneWorkspace(id, frame)
+                    }
+                    else onFrame(frame)
+                } catch (error: Exception) {
                     if (continuation.isActive) continuation.resumeWithException(error)
                     webSocket.cancel()
                 }
@@ -527,7 +545,7 @@ class AgentActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val settings = SecureSettings(this)
-        val api = AgentConnection(settings)
+        val api = AgentConnection(settings, this, true)
         setContent {
             val scope = rememberCoroutineScope()
             var modeSwitchTrigger by remember { mutableIntStateOf(0) }
