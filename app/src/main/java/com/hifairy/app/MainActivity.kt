@@ -929,7 +929,6 @@ class MainActivity : ComponentActivity() {
                                 secureSettings.voiceAutoPlay = voiceAutoPlay
                                 if (!voiceAutoPlay) { stopSpeech(); stopBalanceVoice() }
                             }, ThemeTokens.accent)
-                            MessageAction("plus", "开始新对话", { newChat() }, ThemeTokens.accent)
                         }
                     }
                 }

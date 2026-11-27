@@ -34,6 +34,18 @@ test('browse one directory, protect its boundary, upload and download without mu
     assert.equal(await downloaded.text(), 'uploaded')
     assert.equal((await fetch(`${base}/workspaces/project/upload?name=..%2Fbad.txt`, { method: 'POST', headers, body: 'bad' })).status, 400)
     assert.equal((await fetch(`${base}/workspaces/project/files`, { method: 'DELETE', headers })).status, 405)
+    const roots = await (await fetch(`${base}/filesystem/roots`, { headers })).json()
+    assert(roots.items.some(item => item.directory))
+    const absolute = await (await fetch(`${base}/filesystem/files?path=${encodeURIComponent(root)}`, { headers })).json()
+    assert(absolute.items.some(item => item.name === 'child' && item.directory))
+    const arbitraryUpload = await (await fetch(`${base}/filesystem/upload?path=${encodeURIComponent(root)}&name=anywhere.txt`,
+      { method: 'POST', headers, body: 'anywhere' })).json()
+    assert.equal(await readFile(arbitraryUpload.path, 'utf8'), 'anywhere')
+    const arbitraryDownload = await fetch(`${base}/filesystem/download?path=${encodeURIComponent(arbitraryUpload.path)}`, { headers })
+    assert.equal(await arbitraryDownload.text(), 'anywhere')
+    assert.equal((await fetch(`${base}/filesystem/files?path=relative`, { headers })).status, 400)
+    assert.equal((await fetch(`${base}/filesystem/download?path=${encodeURIComponent(outside)}`, { headers })).status, 400)
+    assert.equal((await fetch(`${base}/filesystem/files`, { method: 'DELETE', headers })).status, 405)
   } finally {
     await new Promise(resolve => server.close(resolve))
     await rm(root, { recursive: true, force: true })

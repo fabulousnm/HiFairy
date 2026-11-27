@@ -2,7 +2,8 @@ import { createServer } from 'node:http'
 import { readFileSync } from 'node:fs'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
 import { HOST_MESSAGE_WINDOW, recentItems, findDetail } from './recent.js'
-import { listWorkspaceDirectory, uploadWorkspaceFile, downloadWorkspaceFile } from './workspace-files.js'
+import { listWorkspaceDirectory, uploadWorkspaceFile, downloadWorkspaceFile,
+  listComputerRoots, listComputerDirectory, uploadComputerFile, downloadComputerFile } from './workspace-files.js'
 
 export const name = 'hifairy-dsh-host-probe'
 export const inject = ['sessionController', 'workspaceRegistry', 'agentPresets', 'fileUploads']
@@ -50,16 +51,23 @@ export function createProbeServer(controller, token, options = {}) {
     }
     const parsed = new URL(request.url ?? '/', 'http://localhost')
     const workspaceMatch = /^\/workspaces\/([a-zA-Z0-9_-]+)\/(files|upload|download)$/.exec(parsed.pathname)
-    if (workspaceMatch) {
-      const [, workspaceId, action] = workspaceMatch
+    const computerMatch = /^\/filesystem\/(roots|files|upload|download)$/.exec(parsed.pathname)
+    if (workspaceMatch || computerMatch) {
+      const workspaceId = workspaceMatch?.[1]
+      const action = workspaceMatch?.[2] ?? computerMatch[1]
+      const path = parsed.searchParams.get('path') ?? ''
       try {
+        if (request.method === 'GET' && action === 'roots') return respond(response, 200, await listComputerRoots())
         if (request.method === 'GET' && action === 'files')
-          return respond(response, 200, await listWorkspaceDirectory(options.workspaceRegistry, workspaceId, parsed.searchParams.get('path') ?? ''))
+          return respond(response, 200, workspaceId
+            ? await listWorkspaceDirectory(options.workspaceRegistry, workspaceId, path) : await listComputerDirectory(path))
         if (request.method === 'POST' && action === 'upload')
-          return respond(response, 201, await uploadWorkspaceFile(options.workspaceRegistry, workspaceId,
-            parsed.searchParams.get('path') ?? '', parsed.searchParams.get('name') ?? '', request))
+          return respond(response, 201, workspaceId
+            ? await uploadWorkspaceFile(options.workspaceRegistry, workspaceId, path, parsed.searchParams.get('name') ?? '', request)
+            : await uploadComputerFile(path, parsed.searchParams.get('name') ?? '', request))
         if (request.method === 'GET' && action === 'download') {
-          const file = await downloadWorkspaceFile(options.workspaceRegistry, workspaceId, parsed.searchParams.get('path') ?? '')
+          const file = workspaceId ? await downloadWorkspaceFile(options.workspaceRegistry, workspaceId, path)
+            : await downloadComputerFile(path)
           response.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': file.bytes,
             'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`, 'Cache-Control': 'no-store' })
           file.stream.pipe(response)

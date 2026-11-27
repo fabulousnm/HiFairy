@@ -77,6 +77,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.coroutineScope
 import java.time.LocalTime
 import java.time.Instant
 import java.math.BigDecimal
@@ -351,13 +352,17 @@ private class AgentConnection(private val settings: SecureSettings) {
     fun cancel(id: String) { request("/sessions/$id/cancel", "POST", "{}") }
     private fun encoded(value: String) = URLEncoder.encode(value, "UTF-8")
     fun folder(workspaceId: String, path: String): AgentFolder {
-        val json = request("/workspaces/$workspaceId/files?path=${encoded(path)}")
+        val endpoint = if (workspaceId.isBlank())
+            if (path.isBlank()) "/filesystem/roots" else "/filesystem/files?path=${encoded(path)}"
+        else "/workspaces/$workspaceId/files?path=${encoded(path)}"
+        val json = request(endpoint)
         val entries = json.getJSONArray("items")
-        return AgentFolder(json.optString("path"), json.optString("parent").takeIf { it.isNotBlank() && it != "null" },
+        return AgentFolder(json.optString("path"), if (json.has("parent") && !json.isNull("parent")) json.getString("parent") else null,
             (0 until entries.length()).map { entries.getJSONObject(it) }.map { AgentFile(it.getString("name"), it.optBoolean("directory")) })
     }
     fun upload(workspaceId: String, path: String, name: String, bytes: ByteArray): AgentUpload {
-        val connection = open("/workspaces/$workspaceId/upload?path=${encoded(path)}&name=${encoded(name)}", "POST")
+        val endpoint = if (workspaceId.isBlank()) "/filesystem/upload" else "/workspaces/$workspaceId/upload"
+        val connection = open("$endpoint?path=${encoded(path)}&name=${encoded(name)}", "POST")
         try {
             connection.doOutput = true
             connection.setRequestProperty("Content-Type", "application/octet-stream")
@@ -380,7 +385,8 @@ private class AgentConnection(private val settings: SecureSettings) {
         } finally { connection.disconnect() }
     }
     fun download(workspaceId: String, path: String): ByteArray {
-        val connection = open("/workspaces/$workspaceId/download?path=${encoded(path)}")
+        val endpoint = if (workspaceId.isBlank()) "/filesystem/download" else "/workspaces/$workspaceId/download"
+        val connection = open("$endpoint?path=${encoded(path)}")
         try {
             if (connection.responseCode !in 200..299) throw IllegalStateException("下载失败：${connection.responseCode}")
             return connection.inputStream.use { it.readBytes() }
@@ -509,9 +515,12 @@ class AgentActivity : ComponentActivity() {
             var error by remember { mutableStateOf("") }
             var busy by remember { mutableStateOf(false) }
             var fileDrawerOpen by remember { mutableStateOf(false) }
+            var browseComputer by remember { mutableStateOf(false) }
+            var computerPathDraft by remember { mutableStateOf("") }
             var folder by remember { mutableStateOf<AgentFolder?>(null) }
             var folderLoading by remember { mutableStateOf(false) }
             var folderWorkspace by remember { mutableStateOf("") }
+            var folderRequestSerial by remember { mutableIntStateOf(0) }
             var attachOnUpload by remember { mutableStateOf(false) }
             val pendingUploads = remember { mutableStateListOf<AgentPendingAttachment>() }
             var pendingSave by remember { mutableStateOf<Pair<String, String>?>(null) }
@@ -522,7 +531,7 @@ class AgentActivity : ComponentActivity() {
             var chosenMode by remember { mutableStateOf("") }
             var chosenWorkspace by remember { mutableStateOf("") }
             val openDocument = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-                if (uri != null && chosenWorkspace.isNotBlank()) scope.launch {
+                if (uri != null && (chosenWorkspace.isNotBlank() || (fileDrawerOpen && browseComputer))) scope.launch {
                     try {
                         var name = "附件"
                         var declaredSize = -1L
@@ -541,8 +550,9 @@ class AgentActivity : ComponentActivity() {
                             val bytes = withContext(Dispatchers.IO) { contentResolver.openInputStream(uri)?.use { it.readNBytes(25 * 1024 * 1024 + 1) } ?: throw IllegalStateException("无法读取附件") }
                             if (bytes.size > 25 * 1024 * 1024) throw IllegalStateException("附件最大 25 MB")
                             val currentPath = folder?.path.orEmpty()
-                            withContext(Dispatchers.IO) { api.upload(chosenWorkspace, currentPath, name, bytes) }
-                            if (fileDrawerOpen) folder = withContext(Dispatchers.IO) { api.folder(chosenWorkspace, folder?.path.orEmpty()) }
+                            val target = if (browseComputer) "" else chosenWorkspace
+                            withContext(Dispatchers.IO) { api.upload(target, currentPath, name, bytes) }
+                            if (fileDrawerOpen) folder = withContext(Dispatchers.IO) { api.folder(target, currentPath) }
                         }
                         error = ""
                     } catch (e: Exception) { error = e.message ?: "上传失败" }
@@ -562,9 +572,13 @@ class AgentActivity : ComponentActivity() {
             var choicesLoading by remember { mutableStateOf(false) }
             var choicesRefreshVersion by remember { mutableIntStateOf(0) }
             val drawerWidthPx = with(LocalDensity.current) { LocalConfiguration.current.screenWidthDp.dp.toPx() * .75f }
+            val fileDrawerWidthPx = with(LocalDensity.current) { LocalConfiguration.current.screenWidthDp.dp.toPx() * .84f }
             val drawerProgress = remember { Animatable(0f) }
+            val fileDrawerProgress = remember { Animatable(0f) }
             var dragProgress by remember { mutableFloatStateOf(0f) }
+            var fileDragProgress by remember { mutableFloatStateOf(0f) }
             var draggingDrawer by remember { mutableStateOf(false) }
+            var dragSide by remember { mutableIntStateOf(0) }
             var dragStartedOpen by remember { mutableStateOf(false) }
             var settleVersion by remember { mutableIntStateOf(0) }
             var pendingPrompt by remember { mutableStateOf("") }
@@ -694,16 +708,43 @@ class AgentActivity : ComponentActivity() {
             }
 
             fun loadFolder(workspaceId: String, path: String) {
-                if (workspaceId.isBlank()) return
                 folderLoading = true
                 folder = null // Release the previous directory before requesting the next one.
                 folderWorkspace = workspaceId
+                val serial = ++folderRequestSerial
                 scope.launch {
                     try {
                         val result = withContext(Dispatchers.IO) { api.folder(workspaceId, path) }
-                        if (folderWorkspace == workspaceId && fileDrawerOpen) { folder = result; error = "" }
+                        if (serial == folderRequestSerial && folderWorkspace == workspaceId && fileDrawerOpen) {
+                            folder = result
+                            if (workspaceId.isBlank()) computerPathDraft = result.path
+                            error = ""
+                        }
                     } catch (e: Exception) { error = e.message ?: "读取目录失败" }
-                    finally { folderLoading = false }
+                    finally { if (serial == folderRequestSerial) folderLoading = false }
+                }
+            }
+
+            fun openHistoryDrawer() {
+                scope.launch {
+                    if (fileDrawerOpen || fileDrawerProgress.value > .001f) {
+                        fileDrawerOpen = false
+                        fileDrawerProgress.animateTo(0f, DrawerMotion.settle)
+                        folder = null
+                    }
+                    listOpen = true
+                }
+            }
+
+            fun openFilesDrawer() {
+                scope.launch {
+                    if (listOpen || drawerProgress.value > .001f) {
+                        listOpen = false
+                        drawerProgress.animateTo(0f, DrawerMotion.settle)
+                    }
+                    browseComputer = chosenWorkspace.isBlank()
+                    fileDrawerOpen = true
+                    loadFolder(if (browseComputer) "" else chosenWorkspace, "")
                 }
             }
 
@@ -795,58 +836,99 @@ class AgentActivity : ComponentActivity() {
             }
             BackHandler(fileDrawerOpen) {
                 val parent = folder?.parent
-                if (parent != null) loadFolder(chosenWorkspace, parent)
+                if (parent != null) loadFolder(if (browseComputer) "" else chosenWorkspace, parent)
                 else { fileDrawerOpen = false; folder = null }
             }
             BackHandler(listOpen && !fileDrawerOpen) { listOpen = false }
             BackHandler(!listOpen && !fileDrawerOpen) { if (modeSwitchTrigger == 0) modeSwitchTrigger++ }
-            LaunchedEffect(listOpen, selected, pendingPrompt) {
-                if (listOpen || pendingPrompt.isNotBlank()) {
+            LaunchedEffect(listOpen, fileDrawerOpen, selected, pendingPrompt) {
+                if (listOpen || fileDrawerOpen || pendingPrompt.isNotBlank()) {
                     eyeCardOpen = false
                     balanceRequestSerial++
                     stopBalanceVoice()
                 }
             }
-            LaunchedEffect(listOpen, settleVersion) {
-                val target = if (listOpen) 1f else 0f
-                drawerProgress.animateTo(target, DrawerMotion.settle)
-                drawerProgress.snapTo(target)
+            LaunchedEffect(listOpen, fileDrawerOpen, settleVersion) {
+                coroutineScope {
+                    launch {
+                        val target = if (listOpen) 1f else 0f
+                        drawerProgress.animateTo(target, DrawerMotion.settle)
+                        drawerProgress.snapTo(target)
+                    }
+                    launch {
+                        val target = if (fileDrawerOpen) 1f else 0f
+                        fileDrawerProgress.animateTo(target, DrawerMotion.settle)
+                        fileDrawerProgress.snapTo(target)
+                    }
+                }
             }
 
             BoxWithConstraints(Modifier.fillMaxSize()
                 .modeCircularReveal(reveal.value, if (modeSwitchTrigger > 0) modeSwitchOrigin else entryOrigin, YoukaiTokens.accent)
                 .background(YoukaiTokens.background).draggable(
-                state = rememberDraggableState { delta -> dragProgress = (dragProgress + delta / drawerWidthPx).coerceIn(0f, 1f) },
-                orientation = Orientation.Horizontal,
-                onDragStarted = { drawerProgress.stop(); dragProgress = drawerProgress.value.coerceIn(0f, 1f); dragStartedOpen = dragProgress >= .5f; draggingDrawer = true },
-                onDragStopped = { velocity ->
-                    val open = when {
-                        velocity > DrawerMotion.flingVelocity -> true
-                        velocity < -DrawerMotion.flingVelocity -> false
-                        dragStartedOpen -> dragProgress >= DrawerMotion.closeThreshold
-                        else -> dragProgress >= DrawerMotion.openThreshold
+                state = rememberDraggableState { delta ->
+                    if (dragSide == 0) dragSide = when {
+                        listOpen || drawerProgress.value > .01f -> 1
+                        fileDrawerOpen || fileDrawerProgress.value > .01f -> -1
+                        delta >= 0 -> 1
+                        else -> -1
                     }
-                    drawerProgress.snapTo(dragProgress)
+                    if (dragSide == 1) dragProgress = (dragProgress + delta / drawerWidthPx).coerceIn(0f, 1f)
+                    else fileDragProgress = (fileDragProgress - delta / fileDrawerWidthPx).coerceIn(0f, 1f)
+                },
+                orientation = Orientation.Horizontal,
+                onDragStarted = {
+                    drawerProgress.stop(); fileDrawerProgress.stop()
+                    dragProgress = drawerProgress.value.coerceIn(0f, 1f)
+                    fileDragProgress = fileDrawerProgress.value.coerceIn(0f, 1f)
+                    dragSide = 0
+                    dragStartedOpen = dragProgress >= .5f || fileDragProgress >= .5f
+                    draggingDrawer = true
+                },
+                onDragStopped = { velocity ->
+                    val directedVelocity = if (dragSide == -1) -velocity else velocity
+                    val currentProgress = if (dragSide == -1) fileDragProgress else dragProgress
+                    val open = when {
+                        directedVelocity > DrawerMotion.flingVelocity -> true
+                        directedVelocity < -DrawerMotion.flingVelocity -> false
+                        dragStartedOpen -> currentProgress >= DrawerMotion.closeThreshold
+                        else -> currentProgress >= DrawerMotion.openThreshold
+                    }
+                    if (dragSide == -1) {
+                        fileDrawerProgress.snapTo(fileDragProgress)
+                        fileDrawerOpen = open
+                        listOpen = false
+                        if (open && folder == null) loadFolder(if (browseComputer) "" else chosenWorkspace, "")
+                        if (!open) folder = null
+                    } else {
+                        drawerProgress.snapTo(dragProgress)
+                        listOpen = open
+                        fileDrawerOpen = false
+                        if (!open) folder = null
+                    }
                     draggingDrawer = false
-                    listOpen = open
+                    dragSide = 0
                     settleVersion++
                 }
             )) {
             val drawerWidth = maxWidth * .75f
+            val filesWidth = maxWidth * .84f
             val progress = (if (draggingDrawer) dragProgress else drawerProgress.value).coerceIn(0f, 1f)
-            Column(Modifier.offset(x = drawerWidth * progress).graphicsLayer {
-                scaleX = 1f - .04f * progress
-                scaleY = 1f - .04f * progress
-                rotationY = -5f * progress
-                transformOrigin = TransformOrigin(0f, .5f)
+            val filesProgress = (if (draggingDrawer) fileDragProgress else fileDrawerProgress.value).coerceIn(0f, 1f)
+            Column(Modifier.offset(x = drawerWidth * progress - filesWidth * filesProgress).graphicsLayer {
+                val exposure = maxOf(progress, filesProgress)
+                scaleX = 1f - .04f * exposure
+                scaleY = 1f - .04f * exposure
+                rotationY = -5f * progress + 5f * filesProgress
+                transformOrigin = TransformOrigin(if (filesProgress > progress) 1f else 0f, .5f)
                 cameraDistance = 24f * density
-                shadowElevation = 14.dp.toPx() * progress
+                shadowElevation = 14.dp.toPx() * exposure
                 shape = RoundedCornerShape(20.dp)
-                clip = progress > 0f
+                clip = exposure > 0f
             }.fillMaxSize().background(YoukaiTokens.background).padding(20.dp)) {
                 Box(Modifier.fillMaxWidth().height(44.dp)) {
-                    Box(Modifier.align(Alignment.CenterStart)) { MessageAction("menu", "打开历史对话", { listOpen = true }, YoukaiTokens.accent) }
-                    Text("H.D.D Ⅲ · AGENT", color = YoukaiTokens.text, fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                    Box(Modifier.align(Alignment.CenterStart)) { MessageAction("menu", "打开历史对话", { openHistoryDrawer() }, YoukaiTokens.accent) }
+                    Text("H.D.D Ⅲ", color = YoukaiTokens.text, fontSize = 16.sp, fontWeight = FontWeight.Bold,
                         modifier = Modifier.align(Alignment.Center))
                     Row(Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically) {
                         MessageAction(if (balanceVoiceEnabled) "speaker" else "mute", "切换余额语音", {
@@ -854,13 +936,7 @@ class AgentActivity : ComponentActivity() {
                             settings.agentBalanceVoiceEnabled = balanceVoiceEnabled
                             if (!balanceVoiceEnabled) stopBalanceVoice()
                         }, YoukaiTokens.accent)
-                        MessageAction("folder", "电脑文件", {
-                            if (chosenWorkspace.isBlank()) { error = "请先选择电脑工作区" }
-                            else { fileDrawerOpen = true; loadFolder(chosenWorkspace, "") }
-                        }, YoukaiTokens.accent)
-                        MessageAction("plus", "新任务", {
-                            newTask()
-                        }, YoukaiTokens.accent)
+                        MessageAction("folder", "电脑文件", { openFilesDrawer() }, YoukaiTokens.accent)
                     }
                 }
                 BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
@@ -1070,11 +1146,10 @@ class AgentActivity : ComponentActivity() {
                     }.padding(vertical = 16.dp))
                 }
             }
-            val filesProgress by animateFloatAsState(if (fileDrawerOpen) 1f else 0f, tween(330), label = "computer files drawer")
             if (filesProgress > .001f) {
-                Box(Modifier.fillMaxSize().background(YoukaiTokens.background.copy(alpha = .58f * filesProgress))
-                    .clickable { fileDrawerOpen = false; folder = null })
-                val filesWidth = maxWidth * .84f
+                Box(Modifier.align(Alignment.CenterStart).width(maxWidth - filesWidth * filesProgress).fillMaxHeight()
+                    .background(Brush.horizontalGradient(listOf(YoukaiTokens.drawerVeil.copy(alpha = .32f * filesProgress), Color.Transparent)))
+                    .clickable(onClickLabel = "收起电脑文件") { fileDrawerOpen = false; folder = null; settleVersion++ })
                 Column(Modifier.align(Alignment.CenterEnd).offset(x = filesWidth * (1f - filesProgress))
                     .width(filesWidth).fillMaxHeight().shadow(22.dp, RoundedCornerShape(topStart = 22.dp, bottomStart = 22.dp))
                     .background(YoukaiTokens.surface, RoundedCornerShape(topStart = 22.dp, bottomStart = 22.dp))
@@ -1082,37 +1157,64 @@ class AgentActivity : ComponentActivity() {
                     .padding(16.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text("电脑文件", color = YoukaiTokens.text, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                        MessageAction("plus", "上传到当前工作区", { attachOnUpload = false; openDocument.launch(arrayOf("*/*")) }, YoukaiTokens.accent)
+                        MessageAction("plus", "上传到当前文件夹", {
+                            if (browseComputer && folder?.path.isNullOrBlank()) error = "请先打开一个电脑文件夹"
+                            else { attachOnUpload = false; openDocument.launch(arrayOf("*/*")) }
+                        }, YoukaiTokens.accent)
                         MessageAction("cancel", "关闭电脑文件", { fileDrawerOpen = false; folder = null }, YoukaiTokens.secondary)
                     }
-                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(false to "工作区", true to "此电脑").forEach { (computer, title) ->
+                            Text(title, color = if (browseComputer == computer) YoukaiTokens.text else YoukaiTokens.secondary,
+                                fontSize = 12.sp, modifier = Modifier.background(
+                                    if (browseComputer == computer) YoukaiTokens.pressedCard else YoukaiTokens.raisedCard,
+                                    RoundedCornerShape(9.dp)).clickable {
+                                        browseComputer = computer
+                                        loadFolder(if (computer) "" else chosenWorkspace, "")
+                                    }.padding(horizontal = 13.dp, vertical = 8.dp))
+                        }
+                    }
+                    if (!browseComputer) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         workspaces.forEach { workspace ->
                             Text(workspace.title, color = if (workspace.id == chosenWorkspace) YoukaiTokens.text else YoukaiTokens.secondary,
                                 fontSize = 11.sp, maxLines = 1,
-                                modifier = Modifier.background(if (workspace.id == chosenWorkspace) YoukaiTokens.pressedCard else YoukaiTokens.raisedCard, RoundedCornerShape(9.dp))
-                                    .clickable { chosenWorkspace = workspace.id; loadFolder(workspace.id, "") }.padding(8.dp))
+                                modifier = Modifier.background(if (workspace.id == chosenWorkspace) YoukaiTokens.pressedCard else YoukaiTokens.raisedCard,
+                                    RoundedCornerShape(9.dp)).clickable { chosenWorkspace = workspace.id; loadFolder(workspace.id, "") }.padding(8.dp))
                         }
+                    }
+                    if (browseComputer) Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        TextField(computerPathDraft, { computerPathDraft = it }, modifier = Modifier.weight(1f), singleLine = true,
+                            placeholder = { Text("电脑文件夹绝对路径", color = YoukaiTokens.secondary, fontSize = 11.sp) },
+                            colors = TextFieldDefaults.colors(focusedTextColor = YoukaiTokens.text, unfocusedTextColor = YoukaiTokens.text,
+                                cursorColor = YoukaiTokens.accent, focusedContainerColor = YoukaiTokens.raisedCard,
+                                unfocusedContainerColor = YoukaiTokens.raisedCard, focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent))
+                        MessageAction("send", "打开电脑文件夹", { loadFolder("", computerPathDraft.trim()) }, YoukaiTokens.accent)
                     }
                     Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("‹", color = if (folder?.parent != null) YoukaiTokens.accent else YoukaiTokens.secondary, fontSize = 26.sp,
-                            modifier = Modifier.clickable { folder?.parent?.let { loadFolder(chosenWorkspace, it) } }.padding(end = 12.dp))
-                        Text(if (folder?.path.isNullOrBlank()) "工作区根目录" else folder!!.path, color = YoukaiTokens.secondary,
+                            modifier = Modifier.clickable { folder?.parent?.let { loadFolder(if (browseComputer) "" else chosenWorkspace, it) } }.padding(end = 12.dp))
+                        Text(if (folder?.path.isNullOrBlank()) if (browseComputer) "此电脑" else "工作区根目录" else folder!!.path, color = YoukaiTokens.secondary,
                             fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     if (folderLoading) androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth(), color = YoukaiTokens.accent)
                     LazyColumn(Modifier.weight(1f)) {
                         items(folder?.items.orEmpty(), key = { it.name }) { entry ->
-                            val path = listOfNotNull(folder?.path?.takeIf { it.isNotBlank() }, entry.name).joinToString("/")
+                            val path = if (browseComputer && folder?.path.isNullOrBlank()) entry.name
+                                else if (browseComputer) "${folder!!.path.trimEnd('\\', '/')}\\${entry.name}"
+                                else listOfNotNull(folder?.path?.takeIf { it.isNotBlank() }, entry.name).joinToString("/")
+                            val source = if (browseComputer) "" else chosenWorkspace
                             Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)
                                 .background(YoukaiTokens.raisedCard, RoundedCornerShape(11.dp))
-                                .clickable { if (entry.directory) loadFolder(chosenWorkspace, path) else previewFile(chosenWorkspace, path, entry.name) }
+                                .clickable { if (entry.directory) loadFolder(source, path) else previewFile(source, path, entry.name) }
                                 .padding(start = 12.dp, top = 10.dp, bottom = 10.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Text(if (entry.directory) "▣" else "▤", color = YoukaiTokens.accent, fontSize = 15.sp)
                                 Text(entry.name, color = YoukaiTokens.text, fontSize = 12.sp, maxLines = 1,
                                     overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 8.dp))
                                 if (!entry.directory) Text("↓", color = YoukaiTokens.accent, fontSize = 18.sp,
                                     modifier = Modifier.clickable {
-                                        pendingSave = chosenWorkspace to path
+                                        pendingSave = source to path
                                         saveDocument.launch(entry.name)
                                     }.padding(horizontal = 10.dp))
                             }
@@ -1120,7 +1222,7 @@ class AgentActivity : ComponentActivity() {
                     }
                 }
             }
-            if (voiceHolding && progress < .01f) {
+            if (voiceHolding && progress < .01f && filesProgress < .01f) {
                 val glow by animateColorAsState(if (voiceCancel) YoukaiTokens.voiceCancelGlow else YoukaiTokens.voiceGlow, tween(180), label = "agent voice glow")
                 val level by animateFloatAsState(voiceLevel, tween(100), label = "agent voice level")
                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(330.dp)

@@ -30,6 +30,8 @@ def _bridge_path(path: str) -> str:
     # Never allow callers to choose another local address or arbitrary path.
     if path in {"sessions", "modes", "workspaces"}:
         return "/" + path
+    if path in {"filesystem/roots", "filesystem/files", "filesystem/upload", "filesystem/download"}:
+        return "/" + path
     parts = path.split("/")
     if len(parts) == 3 and parts[0] == "workspaces" and parts[2] in {"files", "upload", "download"} and parts[1] and all(c.isascii() and (c.isalnum() or c in "-_") for c in parts[1]):
         return "/" + path
