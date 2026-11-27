@@ -13,11 +13,25 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "1.0.0"
         ndk { abiFilters += listOf("arm64-v8a") }
     }
     sourceSets.getByName("main").assets.srcDir("../voice-lab/src/main/assets/models/paraformer")
     buildFeatures { compose = true }
+    signingConfigs {
+        create("release") {
+            val keyPath = System.getenv("HIFAIRY_RELEASE_KEYSTORE")
+            if (!keyPath.isNullOrBlank()) {
+                storeFile = file(keyPath)
+                storePassword = System.getenv("HIFAIRY_RELEASE_STORE_PASSWORD")
+                keyAlias = System.getenv("HIFAIRY_RELEASE_KEY_ALIAS")
+                keyPassword = System.getenv("HIFAIRY_RELEASE_KEY_PASSWORD")
+            }
+        }
+    }
+    buildTypes.getByName("release") {
+        signingConfig = signingConfigs.getByName("release")
+    }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
 }

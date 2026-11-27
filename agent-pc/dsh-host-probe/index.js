@@ -1,11 +1,11 @@
 import { createServer } from 'node:http'
-import { readFileSync } from 'node:fs'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
+import { bridgeToken } from './bridge-token.js'
 import { HOST_MESSAGE_WINDOW, recentItems, findDetail } from './recent.js'
 import { listWorkspaceDirectory, uploadWorkspaceFile, downloadWorkspaceFile,
   listComputerRoots, listComputerDirectory, uploadComputerFile, downloadComputerFile } from './workspace-files.js'
 
-export const name = 'hifairy-dsh-host-probe'
+export const name = 'hifairy-dsh-bridge'
 export const inject = ['sessionController', 'workspaceRegistry', 'agentPresets', 'fileUploads', 'sessions', 'permissionPresets']
 
 function authorized(request, token) {
@@ -125,15 +125,6 @@ export function createProbeServer(controller, token, options = {}) {
             action: body.action, path: body.path, content: body.content ?? '',
             overwrite: body.overwrite ?? false, newName: body.newName ?? '', offset: body.offset ?? 0
           }))
-        if (body.action === 'app_list')
-          return respond(response, 200, await phoneWorkspace.offer(phoneCommandMatch[1], { action: 'app_list' }))
-        if (['app_launch', 'app_inspect', 'app_click', 'app_type', 'app_back'].includes(body.action) &&
-            typeof body.packageName === 'string' && /^[A-Za-z0-9_.]{3,180}$/.test(body.packageName) &&
-            (body.target === undefined || typeof body.target === 'string' && body.target.length <= 120) &&
-            (body.value === undefined || typeof body.value === 'string' && body.value.length <= 2000))
-          return respond(response, 200, await phoneWorkspace.offer(phoneCommandMatch[1], {
-            action: body.action, packageName: body.packageName, target: body.target ?? '', value: body.value ?? ''
-          }))
         return respond(response, 400, { error: 'invalid_phone_command' })
       } catch (error) { return respond(response, 400, { error: String(error?.message ?? error) }) }
     }
@@ -233,7 +224,7 @@ export function createProbeServer(controller, token, options = {}) {
       try {
         const body = await readJson(request)
         const workspaces = options.workspaceRegistry.list()
-        const workspaceId = body.workspaceId || options.workspaceId
+        const workspaceId = body.workspaceId || options.workspaceId || workspaces[0]?.id
         if (!workspaces.some(item => item.id === workspaceId)) return respond(response, 400, { error: 'workspace_not_found' })
         const presets = await options.agentPresets.list()
         const agentPreset = body.agentPreset || options.agentPresets.defaultId
@@ -374,16 +365,14 @@ export function createProbeServer(controller, token, options = {}) {
 }
 
 export function apply(ctx, config) {
-  if (!config?.tokenFile) throw new Error('HiFairy probe requires a tokenFile')
-  const token = readFileSync(config.tokenFile, 'utf8').trim()
-  if (token.length < 32) throw new Error('HiFairy probe token must contain at least 32 characters')
+  const token = bridgeToken(config)
   const bridgeOptions = {
-    workspaceId: config.workspaceId, workspaceRegistry: ctx.workspaceRegistry, agentPresets: ctx.agentPresets,
+    workspaceId: config?.workspaceId, workspaceRegistry: ctx.workspaceRegistry, agentPresets: ctx.agentPresets,
     fileUploads: ctx.fileUploads, sessions: ctx.sessions, permissionPresets: ctx.permissionPresets
   }
   const server = createProbeServer(ctx.sessionController, token, bridgeOptions)
   ctx.effect(() => {
-    server.listen(config.port ?? 18765, '127.0.0.1')
+    server.listen(config?.port ?? 18765, '127.0.0.1')
     return () => server.close()
   })
   ctx.on('approval/request', (request, next) => bridgeOptions.approvalBridge.offer(request, next), true)

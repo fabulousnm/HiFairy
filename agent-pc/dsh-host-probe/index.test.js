@@ -68,8 +68,7 @@ test('phone workspace probe is delivered only to the active session and returns 
     })
     assert.equal(batchAccepted.status, 200)
     assert.equal((await batchCommand).status, 200)
-    for (const action of ['list_path', 'read_text', 'write_text', 'mkdir', 'rename', 'delete_file',
-      'app_list', 'app_launch', 'app_inspect', 'app_click', 'app_type', 'app_back']) {
+    for (const action of ['list_path', 'read_text', 'write_text', 'mkdir', 'rename', 'delete_file']) {
       const body = { action, path: 'test/note.txt', content: 'hello', overwrite: true, newName: 'renamed.txt',
         offset: 0, packageName: 'com.example.test', target: '确定', value: 'hello' }
       const commandPromise = fetch(`${base}/sessions/session-test/phone-workspace-command`, {

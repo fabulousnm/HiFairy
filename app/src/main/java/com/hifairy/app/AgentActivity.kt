@@ -312,8 +312,7 @@ private fun AgentHoldEye(size: androidx.compose.ui.unit.Dp, modifier: Modifier =
 }
 
 internal class AgentConnection(private val settings: SecureSettings, private val context: android.content.Context,
-                               private val allowPhoneWorkspace: Boolean = false,
-                               private val allowPhoneApps: Boolean = false) {
+                               private val allowPhoneWorkspace: Boolean = false) {
     companion object {
         private val claimedRequests = LinkedHashSet<String>()
         private fun claim(id: String): Boolean = synchronized(claimedRequests) {
@@ -417,10 +416,6 @@ internal class AgentConnection(private val settings: SecureSettings, private val
                         store.workspaceOperation(frame.getString("action"), frame.getString("path"),
                             frame.optString("content"), frame.optBoolean("overwrite"),
                             frame.optString("newName"), frame.optInt("offset"))
-                    "app_launch", "app_inspect", "app_click", "app_type", "app_back" ->
-                        PhoneAppAccessibilityService.run(frame.getString("action").removePrefix("app_"),
-                            frame.getString("packageName"), frame.optString("target"), frame.optString("value"))
-                    "app_list" -> PhoneAppControlStore(context).catalog()
                     else -> "未知手机工作区请求，已拒绝。"
                 }
             }.getOrElse { "手机工作区操作失败：${it.javaClass.simpleName}: ${it.message}" }
@@ -502,9 +497,7 @@ internal class AgentConnection(private val settings: SecureSettings, private val
                 try {
                     val frame = JSONObject(text)
                     if (frame.optString("type") == "phone-workspace-request") {
-                        val appRequest = frame.optString("action").startsWith("app_")
-                        if (((appRequest && allowPhoneApps) || (!appRequest && allowPhoneWorkspace)) &&
-                            claim(frame.optString("id")))
+                        if (allowPhoneWorkspace && claim(frame.optString("id")))
                             answerPhoneWorkspace(id, frame)
                     }
                     else onFrame(frame)
@@ -581,7 +574,7 @@ class AgentActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val settings = SecureSettings(this)
-        val api = AgentConnection(settings, this, true, true)
+        val api = AgentConnection(settings, this, true)
         setContent {
             val scope = rememberCoroutineScope()
             var modeSwitchTrigger by remember { mutableIntStateOf(0) }

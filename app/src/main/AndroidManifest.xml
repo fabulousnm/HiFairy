@@ -4,7 +4,6 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
-    <queries><intent><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent></queries>
     <application android:label="HiFairy" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:theme="@style/HiFairyTheme" android:usesCleartextTraffic="false">
         <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.files" android:exported="false" android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/agent_file_paths" />
@@ -12,13 +11,8 @@
         <activity android:name=".AgentActivity" android:exported="false" android:theme="@style/HiFairyAgentRevealTheme" />
         <receiver android:name=".AgentApprovalReceiver" android:exported="false" />
         <service android:name=".AgentMonitorService" android:exported="false" android:foregroundServiceType="remoteMessaging" />
-        <service android:name=".PhoneAppAccessibilityService" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:exported="true">
-            <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>
-            <meta-data android:name="android.accessibilityservice" android:resource="@xml/phone_app_accessibility" />
-        </service>
         <activity android:name=".PrivacySettingsActivity" android:exported="false" />
         <activity android:name=".PhoneWorkspaceSettingsActivity" android:exported="false" />
-        <activity android:name=".PhoneAppSettingsActivity" android:exported="false" />
         <activity android:name=".MainActivity" android:exported="true" android:configChanges="orientation|screenSize">
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
         </activity>

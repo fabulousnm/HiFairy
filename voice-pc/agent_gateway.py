@@ -2,6 +2,7 @@
 
 import hmac
 import asyncio
+import os
 from pathlib import Path
 
 import httpx
@@ -11,7 +12,7 @@ from fastapi.responses import Response, StreamingResponse
 router = APIRouter(prefix="/agent")
 BRIDGE_URL = "http://127.0.0.1:18765"
 MOBILE_TOKEN_FILE = Path(__file__).parent / "vendor" / "agent-mobile-token.txt"
-BRIDGE_TOKEN_FILE = Path("D:/dsh-data/hifairy-agent-probe.token")
+BRIDGE_TOKEN_FILE = Path(os.environ.get("HIFAIRY_BRIDGE_TOKEN_FILE", Path.home() / ".hifairy" / "bridge.token"))
 
 
 def _tokens(authorization: str | None) -> str:

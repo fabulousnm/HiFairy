@@ -1,6 +1,6 @@
 param(
     [ValidateSet('Full', 'Gateway')][string]$Mode,
-    [string]$PythonPath = 'G:\HiFairy-voice-env\Scripts\python.exe',
+    [string]$PythonPath = '',
     [int]$Port = 8765,
     [switch]$StatusOnly
 )
@@ -59,8 +59,16 @@ if (-not $Mode) {
     $choice = Read-Host '请选择 1 或 2'
     $Mode = switch ($choice) { '1' { 'Full' } '2' { 'Gateway' } default { throw '请选择 1 或 2。' } }
 }
-if (-not (Test-Path -LiteralPath $PythonPath)) { throw "Python 环境不存在：$PythonPath" }
-if (-not (Test-Path -LiteralPath $cloudflared)) { throw "cloudflared 不存在：$cloudflared" }
+if (-not $PythonPath) {
+    $PythonPath = if ($env:HIFAIRY_PYTHON) { $env:HIFAIRY_PYTHON }
+        elseif (Test-Path -LiteralPath (Join-Path $root '.venv\Scripts\python.exe')) { Join-Path $root '.venv\Scripts\python.exe' }
+        else { (Get-Command python -ErrorAction SilentlyContinue).Source }
+}
+if (-not $PythonPath -or -not (Test-Path -LiteralPath $PythonPath)) { throw "Python 环境不存在：$PythonPath" }
+if (-not (Test-Path -LiteralPath $cloudflared)) {
+    $cloudflared = (Get-Command cloudflared -ErrorAction SilentlyContinue).Source
+}
+if (-not $cloudflared -or -not (Test-Path -LiteralPath $cloudflared)) { throw 'cloudflared 未安装；请安装到 PATH 或 voice-pc/vendor。' }
 Stop-PreviousHiFairy $Port
 New-Item -ItemType Directory -Path $output -Force | Out-Null
 if (-not (Test-Path -LiteralPath $agentTokenFile)) {

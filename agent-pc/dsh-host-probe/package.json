@@ -1,8 +1,11 @@
 {
-  "name": "hifairy-dsh-host-probe",
-  "version": "0.0.1",
+  "name": "hifairy-dsh-bridge",
+  "version": "0.1.0",
+  "description": "Connect HiFairy mobile Agent to a local DeepSeek Harness session and mounted phone workspace.",
   "type": "module",
-  "private": true,
+  "license": "MIT",
+  "keywords": ["dsh-plugin", "deepseek-harness", "hifairy", "mobile-agent"],
+  "files": ["cordis.patch.yml", "index.js", "recent.js", "workspace-files.js", "phone-workspace-tool.js", "bridge-token.js", "README.md", "LICENSE"],
   "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
   "exports": { ".": "./index.js", "./phone-workspace-tool": "./phone-workspace-tool.js" },
   "scripts": { "test": "node --test" }

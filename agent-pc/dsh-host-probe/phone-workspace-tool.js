@@ -1,15 +1,14 @@
-import { readFileSync } from 'node:fs'
+import { bridgeToken } from './bridge-token.js'
 
 export const name = 'hifairy-phone-workspace-tool'
 export const inject = ['tools']
 
 export function apply(ctx, config) {
-  if (!config?.tokenFile) throw new Error('HiFairy phone tool requires tokenFile')
-  const token = readFileSync(config.tokenFile, 'utf8').trim()
+  const token = bridgeToken(config)
   const output = { schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },
     render: (_args, value) => [{ type: 'text', text: value.text }] }
   async function command(sessionId, body) {
-    const response = await fetch(`http://127.0.0.1:${config.port ?? 18765}/sessions/${sessionId}/phone-workspace-command`, {
+    const response = await fetch(`http://127.0.0.1:${config?.port ?? 18765}/sessions/${sessionId}/phone-workspace-command`, {
       method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body), signal: AbortSignal.timeout(33000)
     })
@@ -51,27 +50,6 @@ export function apply(ctx, config) {
   registerWorkspaceTool('hifairy_phone_delete_file',
     '仅当用户明确要求删除手机端挂载工作区的某个文件时使用。只删除单个文件，不删除目录或递归删除。',
     { path }, ['path'], args => ({ action: 'delete_file', path: args.path }))
-  registerWorkspaceTool('hifairy_phone_apps',
-    '当用户要求操作手机应用时先调用，列出用户在 HiFairy 设置中逐项允许的 Android 兼容环境应用及动作，并取得准确包名。',
-    {}, [], () => ({ action: 'app_list' }))
-  const packageName = { type: 'string', description: '从 hifairy_phone_apps 返回的已允许应用包名' }
-  registerWorkspaceTool('hifairy_phone_app_launch',
-    '仅当用户要求打开已允许的手机应用时使用。启动后要读取界面确认，不能假定已成功显示。',
-    { packageName }, ['packageName'], args => ({ action: 'app_launch', packageName: args.packageName }))
-  registerWorkspaceTool('hifairy_phone_app_inspect',
-    '当用户要求查看已允许的手机应用当前界面时使用。只返回 Android 无障碍节点的可见文本与可点击标签，不读取未允许的应用。',
-    { packageName }, ['packageName'], args => ({ action: 'app_inspect', packageName: args.packageName }))
-  registerWorkspaceTool('hifairy_phone_app_click',
-    '仅当用户要求操作已允许手机应用，且目标控件可见文字已明确时使用；按文字精确匹配并点击，不做坐标盲点。',
-    { packageName, target: { type: 'string', description: '要点击的当前界面可见文字或无障碍描述，需精确匹配' } },
-    ['packageName', 'target'], args => ({ action: 'app_click', packageName: args.packageName, target: args.target }))
-  registerWorkspaceTool('hifairy_phone_app_type',
-    '仅当用户要求在已允许手机应用的当前已聚焦输入框填写文字时使用。不会自动点击输入框或提交表单。',
-    { packageName, value: { type: 'string', description: '要填写的完整文字，最多 2000 字' } },
-    ['packageName', 'value'], args => ({ action: 'app_type', packageName: args.packageName, value: args.value }))
-  registerWorkspaceTool('hifairy_phone_app_back',
-    '仅当用户要求在已允许手机应用中返回上一级时使用；不会切换到未允许应用。',
-    { packageName }, ['packageName'], args => ({ action: 'app_back', packageName: args.packageName }))
   ctx.effect(() => ctx.tools.register({
     name: 'hifairy_phone_workspace_batch_probe',
     description: '用户要求一次验证六项手机工作区能力时使用：分页列目录、新建测试子目录、新建测试文本、读取、覆盖、进入子目录并返回。只在当前手机 Agent 会话前台运行，只留下 HiFairy-agent-test- 前缀的测试目录和文本，不修改已有文件。',
@@ -93,7 +71,7 @@ export function apply(ctx, config) {
     async execute(_args, exec) {
       const sessionId = exec?.agent?.session?.id
       if (!sessionId) return { text: '无法识别当前 DSH 会话。' }
-      const response = await fetch(`http://127.0.0.1:${config.port ?? 18765}/sessions/${sessionId}/phone-workspace-probe`, {
+      const response = await fetch(`http://127.0.0.1:${config?.port ?? 18765}/sessions/${sessionId}/phone-workspace-probe`, {
         method: 'POST', headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(33000)
       })
       if (!response.ok) return { text: `手机工作区桥接返回 ${response.status}` }

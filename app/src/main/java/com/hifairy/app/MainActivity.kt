@@ -1155,11 +1155,6 @@ class MainActivity : ComponentActivity() {
                                 Text("挂载与测试  ›", color = ThemeTokens.accent, modifier = Modifier.fillMaxWidth()
                                     .clickable { startActivity(Intent(this@MainActivity, PhoneWorkspaceSettingsActivity::class.java)) }.padding(vertical = 8.dp))
                             }
-                            SettingsCard("PHONE // APPS", "手机应用操作") {
-                                Text("手动开启无障碍服务，并逐个选择允许的应用和动作；仅适用于卓易通可见的应用。", color = ThemeTokens.secondary, fontSize = 12.sp)
-                                Text("选择应用与权限  ›", color = ThemeTokens.accent, modifier = Modifier.fillMaxWidth()
-                                    .clickable { startActivity(Intent(this@MainActivity, PhoneAppSettingsActivity::class.java)) }.padding(vertical = 8.dp))
-                            }
                             SettingsCard("STARTUP // MOTION", "启动体验") {
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween) {
