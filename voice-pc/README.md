@@ -30,7 +30,7 @@
 
 ## 临时异网语音测试
 
-Windows 上可双击仓库根目录的 `启动HiFairy语音服务器.cmd`：脚本检查并复用已就绪的本地 Fairy 服务和 Cloudflare 通道；缺失时在后台启动，等待模型预热及公网健康检查，最后显示手机「语音播放」设置所需的 `wss://…/stream` 地址与访问令牌。命令行只检查现有服务可运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File voice-pc/start-hifairy-server.ps1 -StatusOnly`；虚拟环境位置变化时用 `-PythonPath` 指定 Python。令牌只从被 Git 忽略的 `vendor/remote-test-token.txt` 读取，不写入脚本或仓库。地址为临时 Quick Tunnel，每次重新建通道可能变化。
+命令行只检查现有服务可运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File voice-pc/start-hifairy-server.ps1 -StatusOnly`；虚拟环境位置变化时用 `-PythonPath` 指定 Python。令牌只从被 Git 忽略的 `vendor/remote-test-token.txt` 读取，不写入脚本或仓库。Windows 的 `.cmd` 文件必须以 CRLF 换行；仓库通过 `.gitattributes` 在检出时固定该格式。
 
 启动脚本复用通道前同时验证 `/health` 和带令牌的 `/agent/sessions`；仅健康页可访问而 Agent 请求超时时会重建通道。新建通道固定使用 Cloudflare HTTP/2 传输，规避这台电脑上 QUIC 通道长时间运行后大响应卡住的问题。Quick Tunnel 的随机域名在重建后会变化，手机需按脚本新输出更新服务地址，原令牌不变。
 
