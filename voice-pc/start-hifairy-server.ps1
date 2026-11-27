@@ -25,6 +25,26 @@ function Find-TunnelUrl([string]$log) {
     } finally { $stream.Dispose() }
     return $null
 }
+function Stop-PreviousHiFairy([int]$targetPort) {
+    $listener = Get-NetTCPConnection -LocalPort $targetPort -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $listener) { return }
+    $owner = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)"
+    $expected = [regex]::Escape((Join-Path $root 'server.py')) + '|' + [regex]::Escape((Join-Path $root 'gateway_only.py'))
+    if ($owner.CommandLine -notmatch $expected) { throw "端口 $targetPort 被非 HiFairy 进程占用，未自动关闭。" }
+    Write-Host "正在接管旧 HiFairy 服务（端口 $targetPort）…"
+    Get-CimInstance Win32_Process | Where-Object {
+        $_.Name -eq 'cloudflared-windows-amd64.exe' -and
+        $_.CommandLine -like "*--url http://127.0.0.1:$targetPort*"
+    } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Get-CimInstance Win32_Process | Where-Object {
+        $_.Name -eq 'python.exe' -and $_.CommandLine -match $expected -and
+        ($_.CommandLine -match "--port $targetPort(?:\s|$)" -or ($targetPort -eq 8765 -and $_.CommandLine -notmatch '--port'))
+    } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Milliseconds 700
+    if (Get-NetTCPConnection -LocalPort $targetPort -State Listen -ErrorAction SilentlyContinue) {
+        throw "旧服务仍占用端口 $targetPort，请检查。"
+    }
+}
 if ($StatusOnly) {
     if (-not (Test-Health $localHealth)) { throw '本地服务尚未启动。' }
     $log = Get-ChildItem -LiteralPath $output -Filter 'tunnel-launch-*.err.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
@@ -41,7 +61,7 @@ if (-not $Mode) {
 }
 if (-not (Test-Path -LiteralPath $PythonPath)) { throw "Python 环境不存在：$PythonPath" }
 if (-not (Test-Path -LiteralPath $cloudflared)) { throw "cloudflared 不存在：$cloudflared" }
-if (Test-Health $localHealth) { throw "本机 $Port 端口已有 HiFairy 服务；请先关闭旧服务。" }
+Stop-PreviousHiFairy $Port
 New-Item -ItemType Directory -Path $output -Force | Out-Null
 if (-not (Test-Path -LiteralPath $agentTokenFile)) {
     $bytes = New-Object byte[] 32
