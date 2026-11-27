@@ -35,7 +35,7 @@ class PhoneWorkspaceSettingsActivity : Activity() {
             this.text = value; textSize = size; setTextColor(Color.rgb(226, 221, 239)); setPadding(0, 0, 0, 20)
         }
         root.addView(text("手机工作区", 25f))
-        root.addView(text("仅挂载卓易通兼容区内的普通文件夹。“我的设备（鸿蒙）”映射目录和系统敏感目录不可挂载。当前仅开放 Agent 测试工具：列少量文件名，并创建、覆盖本应用生成的测试文本。", 15f))
+        root.addView(text("仅挂载卓易通兼容区内的普通文件夹。“我的设备（鸿蒙）”映射目录和系统敏感目录不可挂载。Agent 可在此目录内列出、读取和修改文本文件，并新建目录；删除仅支持单个文件。请只挂载你愿意让 Agent 操作的目录。", 15f))
         root.addView(Button(this).apply {
             this.text = "手动选择工作区"
             setOnClickListener {

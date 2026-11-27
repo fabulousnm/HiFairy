@@ -125,6 +125,15 @@ export function createProbeServer(controller, token, options = {}) {
             action: body.action, path: body.path, content: body.content ?? '',
             overwrite: body.overwrite ?? false, newName: body.newName ?? '', offset: body.offset ?? 0
           }))
+        if (body.action === 'app_list')
+          return respond(response, 200, await phoneWorkspace.offer(phoneCommandMatch[1], { action: 'app_list' }))
+        if (['app_launch', 'app_inspect', 'app_click', 'app_type', 'app_back'].includes(body.action) &&
+            typeof body.packageName === 'string' && /^[A-Za-z0-9_.]{3,180}$/.test(body.packageName) &&
+            (body.target === undefined || typeof body.target === 'string' && body.target.length <= 120) &&
+            (body.value === undefined || typeof body.value === 'string' && body.value.length <= 2000))
+          return respond(response, 200, await phoneWorkspace.offer(phoneCommandMatch[1], {
+            action: body.action, packageName: body.packageName, target: body.target ?? '', value: body.value ?? ''
+          }))
         return respond(response, 400, { error: 'invalid_phone_command' })
       } catch (error) { return respond(response, 400, { error: String(error?.message ?? error) }) }
     }

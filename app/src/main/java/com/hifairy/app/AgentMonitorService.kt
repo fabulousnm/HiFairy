@@ -64,7 +64,8 @@ class AgentMonitorService : Service() {
         manager.createNotificationChannel(NotificationChannel(AGENT_CHANNEL, "YOUKAI 任务进展", NotificationManager.IMPORTANCE_DEFAULT))
         startForeground(AGENT_NOTIFICATION, buildNotification("正在连接电脑任务", null))
         followJob = scope.launch {
-            val connection = AgentConnection(SecureSettings(this@AgentMonitorService), this@AgentMonitorService)
+            val connection = AgentConnection(SecureSettings(this@AgentMonitorService), this@AgentMonitorService,
+                allowPhoneApps = true)
             api = connection
             val reducer = AgentStreamReducer()
             try {

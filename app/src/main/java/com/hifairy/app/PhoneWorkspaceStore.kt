@@ -330,9 +330,28 @@ internal class PhoneWorkspaceStore(private val context: Context) {
                 if (action == "rename") {
                     val target = pathParts(newName)
                     require(target.size == 1) { "新名称只能是同目录的文件或目录名" }
+                    require(entry.mime != DocumentsContract.Document.MIME_TYPE_DIR) { "当前只支持重命名文本文件" }
+                    textMime(parts.last())
+                    val targetMime = textMime(newName)
                     val parent = resolve(tree, parts.dropLast(1))
                     require(findChild(tree, parent.id, newName) == null) { "新名称已存在" }
-                    requireNotNull(DocumentsContract.renameDocument(resolver, entry.uri, newName)) { "重命名失败" }
+                    val original = readText(entry.uri)
+                    val copy = DocumentsContract.createDocument(resolver, parent.uri, targetMime, newName)
+                        ?: error("目标文件创建失败，源文件未改动")
+                    try {
+                        resolver.openOutputStream(copy, "wt")?.use { it.write(original.toByteArray(Charsets.UTF_8)) }
+                            ?: error("目标文件写入失败")
+                        check(readText(copy) == original) { "目标文件读回不一致" }
+                        check(findChild(tree, parent.id, newName)?.id == DocumentsContract.getDocumentId(copy)) {
+                            "目标名称与文件提供者返回值不一致"
+                        }
+                    } catch (error: Exception) {
+                        runCatching { DocumentsContract.deleteDocument(resolver, copy) }
+                        throw IllegalStateException("目标文件未校验成功，源文件已保留：${error.message}", error)
+                    }
+                    check(DocumentsContract.deleteDocument(resolver, entry.uri)) {
+                        "目标文件已校验，但源文件删除失败；两个文件均保留，请手动检查"
+                    }
                     "已重命名手机工作区条目：$path → ${parts.dropLast(1).plus(newName).joinToString("/")}"
                 } else {
                     require(entry.mime != DocumentsContract.Document.MIME_TYPE_DIR) { "只能删除文件，不能删除目录" }
