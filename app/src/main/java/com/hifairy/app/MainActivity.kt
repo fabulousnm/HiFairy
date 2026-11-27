@@ -60,6 +60,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -633,6 +635,7 @@ class MainActivity : ComponentActivity() {
     private var chatOpenedFromHistory = false
     private var historyOpen by mutableStateOf(false)
     private var introPhase by mutableStateOf("boot")
+    private var bootAnimationEnabled by mutableStateOf(true)
     private var greetingHour by mutableIntStateOf(LocalTime.now().hour)
     private var eyeCompletionToken by mutableIntStateOf(0)
     private var greetingPlayer: MediaPlayer? = null
@@ -726,8 +729,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         secureSettings = SecureSettings(this)
+        bootAnimationEnabled = secureSettings.bootAnimationEnabled
         settingsOnly = intent.getBooleanExtra("open_settings_only", false)
         if (settingsOnly) { page = "settings"; introPhase = "ready" }
+        else if (!bootAnimationEnabled) introPhase = "greeting"
         chatStore = ChatStore(this)
         sessions.addAll(chatStore.load())
         modelDraft = secureSettings.model
@@ -1144,6 +1149,23 @@ class MainActivity : ComponentActivity() {
                                 Text("管理 DeepSeek、语音服务和电脑 Agent 的访问凭据", color = ThemeTokens.secondary, fontSize = 12.sp)
                                 Text("进入隐私安全  ›", color = ThemeTokens.accent, modifier = Modifier.fillMaxWidth()
                                     .clickable { startActivity(Intent(this@MainActivity, PrivacySettingsActivity::class.java)) }.padding(vertical = 8.dp))
+                            }
+                            SettingsCard("STARTUP // MOTION", "启动体验") {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text("播放开屏动画", color = ThemeTokens.text, fontSize = 15.sp)
+                                        Text("关闭后从下次启动起跳过开屏视频", color = ThemeTokens.secondary, fontSize = 12.sp)
+                                    }
+                                    Switch(checked = bootAnimationEnabled, onCheckedChange = {
+                                        bootAnimationEnabled = it
+                                        secureSettings.bootAnimationEnabled = it
+                                    }, colors = SwitchDefaults.colors(
+                                        checkedThumbColor = ThemeTokens.background,
+                                        checkedTrackColor = ThemeTokens.accent,
+                                        uncheckedThumbColor = ThemeTokens.secondary,
+                                        uncheckedTrackColor = ThemeTokens.surface))
+                                }
                             }
                             SettingsCard("MODEL // RESPONSE", "回答偏好") {
                                 Text("模型", color = ThemeTokens.secondary, fontSize = 12.sp)

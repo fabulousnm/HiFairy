@@ -68,6 +68,10 @@ class SecureSettings(context: Context) {
         get() = prefs.getBoolean("voice_auto_play", true)
         set(value) { prefs.edit().putBoolean("voice_auto_play", value).apply() }
 
+    var bootAnimationEnabled: Boolean
+        get() = prefs.getBoolean("boot_animation_enabled", true)
+        set(value) { prefs.edit().putBoolean("boot_animation_enabled", value).apply() }
+
     var agentBalanceVoiceEnabled: Boolean
         get() = prefs.getBoolean("agent_balance_voice_enabled", true)
         set(value) { prefs.edit().putBoolean("agent_balance_voice_enabled", value).apply() }
