@@ -55,6 +55,19 @@ test('phone workspace probe is delivered only to the active session and returns 
     const commandResult = await invalidCommand
     assert.equal(commandResult.status, 200)
     assert.match((await commandResult.json()).text, /rejected by phone/)
+    const batchCommand = fetch(`${base}/sessions/session-test/phone-workspace-command`, {
+      method: 'POST', headers, body: JSON.stringify({ action: 'batch_probe' })
+    })
+    const batchFrame = await reader.read()
+    const batchPayload = new TextDecoder().decode(batchFrame.value)
+    assert.match(batchPayload, /"action":"batch_probe"/)
+    const batchId = batchPayload.match(/"id":"([a-f0-9-]{36})"/)
+    assert.ok(batchId)
+    const batchAccepted = await fetch(`${base}/sessions/session-test/phone-workspace-result`, {
+      method: 'POST', headers, body: JSON.stringify({ id: batchId[1], text: '6/6 passed' })
+    })
+    assert.equal(batchAccepted.status, 200)
+    assert.equal((await batchCommand).status, 200)
     const malformed = await fetch(`${base}/sessions/session-test/phone-workspace-command`, {
       method: 'POST', headers, body: JSON.stringify({ action: 'delete', name: 'file' })
     })

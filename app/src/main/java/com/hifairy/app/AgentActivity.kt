@@ -402,6 +402,7 @@ internal class AgentConnection(private val settings: SecureSettings, private val
                     "probe" -> store.probe()
                     "list" -> store.listPage(frame.getInt("offset"))
                     "test_write" -> store.testWrite(frame.getString("name"), frame.getString("content"))
+                    "batch_probe" -> store.batchProbe()
                     else -> "未知手机工作区请求，已拒绝。"
                 }
             }.getOrElse { "手机工作区操作失败：${it.javaClass.simpleName}: ${it.message}" }

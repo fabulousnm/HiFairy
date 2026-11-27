@@ -107,6 +107,8 @@ export function createProbeServer(controller, token, options = {}) {
     if (phoneCommandMatch && request.method === 'POST') {
       try {
         const body = await readJson(request)
+        if (body.action === 'batch_probe')
+          return respond(response, 200, await phoneWorkspace.offer(phoneCommandMatch[1], { action: 'batch_probe' }))
         if (body.action === 'list' && Number.isInteger(body.offset) && body.offset >= 0 && body.offset <= 1000000)
           return respond(response, 200, await phoneWorkspace.offer(phoneCommandMatch[1], { action: 'list', offset: body.offset }))
         if (body.action === 'test_write' && typeof body.name === 'string' && body.name.length <= 64 &&

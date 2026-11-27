@@ -66,15 +66,20 @@ internal class PhoneWorkspaceStore(private val context: Context) {
     fun listPage(offset: Int): String {
         val tree = authorizedTree() ?: return "手机工作区未挂载或授权已失效。"
         require(offset >= 0 && offset <= 1000000) { "无效分页位置" }
-        val id = DocumentsContract.getTreeDocumentId(tree)
-        val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, id)
+        val (count, page) = pageNames(tree, offset, 80)
+        val next = if (offset + page.size < count) offset + page.size else null
+        return "手机工作区文件名：总数 $count；本页从 $offset 开始，共 ${page.size} 项。\n${page.joinToString("\n")}\n${if (next == null) "已到末页" else "下一页 offset=$next"}"
+    }
+
+    private fun pageNames(tree: Uri, offset: Int, limit: Int): Pair<Int, List<String>> {
+        val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
         val page = mutableListOf<String>()
         var count = 0
         var pageChars = 0
         var pageFull = false
         resolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { cursor ->
             while (cursor.moveToNext()) {
-                if (count >= offset && page.size < 80 && !pageFull) {
+                if (count >= offset && page.size < limit && !pageFull) {
                     val name = cursor.getString(0)
                     if (page.isEmpty() || pageChars + name.length + 1 <= 12000) {
                         page.add(name)
@@ -84,8 +89,7 @@ internal class PhoneWorkspaceStore(private val context: Context) {
                 count++
             }
         } ?: error("无法列目录")
-        val next = if (offset + page.size < count) offset + page.size else null
-        return "手机工作区文件名：总数 $count；本页从 $offset 开始，共 ${page.size} 项。\n${page.joinToString("\n")}\n${if (next == null) "已到末页" else "下一页 offset=$next"}"
+        return count to page
     }
 
     fun testWrite(name: String, content: String): String {
@@ -124,6 +128,70 @@ internal class PhoneWorkspaceStore(private val context: Context) {
         resolver.openOutputStream(file, "wt")?.use { it.write(value.toByteArray(Charsets.UTF_8)) } ?: error("无法覆盖")
         check(resolver.openInputStream(file)?.bufferedReader()?.use { it.readText() } == value) { "覆盖后读回不一致" }
         return "指定文件覆盖并读回成功：$name；原内容长度 ${before.length}，新内容长度 ${value.length}。"
+    }
+
+    /** Six bounded SAF checks in one phone-side call; only creates app-named test artifacts. */
+    fun batchProbe(): String {
+        val tree = authorizedTree() ?: return "手机工作区未挂载或授权已失效。"
+        val rootId = DocumentsContract.getTreeDocumentId(tree)
+        val root = DocumentsContract.buildDocumentUriUsingTree(tree, rootId)
+        val folderName = "HiFairy-agent-test-${UUID.randomUUID().toString().take(8)}"
+        val fileName = "HiFairy-agent-test-${UUID.randomUUID().toString().take(8)}.txt"
+        val passed = mutableListOf<String>()
+        var stage = "分页列目录"
+        return try {
+            val rootNames = childNames(tree, rootId)
+            val paged = mutableListOf<String>()
+            var pages = 0
+            do {
+                val (total, names) = pageNames(tree, paged.size, 2)
+                check(total == rootNames.size && (names.isNotEmpty() || paged.size == total))
+                paged += names
+                pages++
+            } while (paged.size < rootNames.size)
+            check(paged == rootNames)
+            passed += "1/6 分页列目录：${rootNames.size} 项，$pages 页（每页 2 项）"
+
+            stage = "新建子目录"
+            val folder = DocumentsContract.createDocument(resolver, root,
+                DocumentsContract.Document.MIME_TYPE_DIR, folderName) ?: error("文件提供者拒绝创建目录")
+            passed += "2/6 新建子目录：$folderName"
+
+            stage = "新建文本"
+            val file = DocumentsContract.createDocument(resolver, folder, "text/plain", fileName)
+                ?: error("文件提供者拒绝创建文本")
+            resolver.openOutputStream(file, "wt")?.use { it.write("HiFairy agent test initial".toByteArray(Charsets.UTF_8)) }
+                ?: error("无法写入新文件")
+            passed += "3/6 新建文本：$fileName"
+
+            stage = "读取文本"
+            check(resolver.openInputStream(file)?.bufferedReader()?.use { it.readText() } == "HiFairy agent test initial")
+            passed += "4/6 读取文本：内容一致"
+
+            stage = "覆盖文本"
+            resolver.openOutputStream(file, "wt")?.use { it.write("HiFairy agent test updated".toByteArray(Charsets.UTF_8)) }
+                ?: error("无法覆盖文本")
+            check(resolver.openInputStream(file)?.bufferedReader()?.use { it.readText() } == "HiFairy agent test updated")
+            passed += "5/6 覆盖文本：读回一致"
+
+            stage = "进入子目录并返回"
+            val folderId = DocumentsContract.getDocumentId(folder)
+            check(fileName in childNames(tree, folderId))
+            check(folderName in childNames(tree, rootId))
+            passed += "6/6 进入子目录并返回：两层名称一致"
+            "六项手机工作区测试全部通过。\n${passed.joinToString("\n")}\n只留下上述 HiFairy-agent-test- 测试目录和文件。"
+        } catch (error: Exception) {
+            "六项手机工作区测试停在：$stage；已通过 ${passed.size}/6。${error.javaClass.simpleName}: ${error.message}\n${passed.joinToString("\n")}"
+        }
+    }
+
+    private fun childNames(tree: Uri, parentId: String): List<String> {
+        val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId)
+        val names = mutableListOf<String>()
+        resolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { cursor ->
+            while (cursor.moveToNext()) names += cursor.getString(0)
+        } ?: error("无法列目录")
+        return names
     }
 
     private fun authorizedTree(): Uri? = mountedUri()?.takeIf { tree ->

@@ -17,6 +17,18 @@ export function apply(ctx, config) {
     return response.json()
   }
   ctx.effect(() => ctx.tools.register({
+    name: 'hifairy_phone_workspace_batch_probe',
+    description: '用户要求一次验证六项手机工作区能力时使用：分页列目录、新建测试子目录、新建测试文本、读取、覆盖、进入子目录并返回。只在当前手机 Agent 会话前台运行，只留下 HiFairy-agent-test- 前缀的测试目录和文本，不修改已有文件。',
+    parameters: { type: 'object', properties: {}, additionalProperties: false },
+    output,
+    timeoutMs: 35000,
+    execute(_args, exec) {
+      const sessionId = exec?.agent?.session?.id
+      if (!sessionId) return { text: '无法识别当前 DSH 会话。' }
+      return command(sessionId, { action: 'batch_probe' })
+    }
+  }))
+  ctx.effect(() => ctx.tools.register({
     name: 'hifairy_phone_workspace_probe',
     description: '用户明确要求测试手机本地挂载工作区时使用。仅在当前手机 Agent 会话前台执行：统计当前目录全部条目、拒绝越界路径，并创建和覆盖一个 HiFairy-agent-test- 前缀的测试文本。不会修改其他文件。',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
