@@ -18,6 +18,7 @@ private const val PREFS = "workspace_permission_test"
 private const val TREE = "tree_uri"
 private const val FILE = "test_file_uri"
 private const val PICK_FOLDER = 51
+private const val CREATE_FILE = 52
 
 class WorkspaceLabActivity : Activity() {
     private val prefs by lazy { getSharedPreferences(PREFS, MODE_PRIVATE) }
@@ -26,6 +27,26 @@ class WorkspaceLabActivity : Activity() {
     @Deprecated("System folder picker result is required for this isolated test app")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == CREATE_FILE) {
+            val file = data?.data
+            if (resultCode != RESULT_OK || file == null) {
+                show("未创建单个测试文件。")
+                return
+            }
+            val flags = data.flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            try {
+                if (flags != (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION))
+                    throw IllegalStateException("文件选择器没有同时授予单文件读写权限")
+                val persisted = try {
+                    contentResolver.takePersistableUriPermission(file, flags)
+                    true
+                } catch (_: Exception) { false }
+                testSingleFile(file, persisted)
+            } catch (error: Exception) {
+                show("单文件授权失败：${error.javaClass.simpleName}: ${error.message}")
+            }
+            return
+        }
         if (requestCode != PICK_FOLDER) return
         val tree = data?.data
         if (resultCode != RESULT_OK || tree == null) {
@@ -74,6 +95,18 @@ class WorkspaceLabActivity : Activity() {
             setOnClickListener { testMountedFolder() }
         }
         root.addView(testButton)
+        root.addView(Button(this).apply {
+            text = "系统选择器新建单个测试文件"
+            setOnClickListener {
+                startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TITLE, "HiFairy-test-${UUID.randomUUID().toString().take(8)}.txt")
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                        Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                }, CREATE_FILE)
+            }
+        })
         root.addView(Button(this).apply {
             text = "检查重启后授权"
             setOnClickListener { checkPersistedGrant() }
@@ -125,9 +158,31 @@ class WorkspaceLabActivity : Activity() {
                 if (secondRead != second) throw IllegalStateException("覆盖写入后读回不一致：$secondRead")
                 "测试通过 ✓\n文件：${file.lastPathSegment}\n持久授权：有效 ✓\n创建：成功 ✓\n首次写入与读回：一致 ✓\n覆盖写入与读回：一致 ✓\n请到鸿蒙文件管理中确认文件内容，再关闭并重开本测试包：先点击‘检查重启后授权’，再点击测试按钮，验证重启后仍可覆盖写入。"
             } catch (error: Exception) {
-                "测试失败：${error.javaClass.simpleName}: ${error.message}\n请截图此页；若在 MyHarmonyDevice 文件夹中失败，也请注明。"
+                "目录测试失败：${error.javaClass.simpleName}: ${error.message}\n若报 Failed to touch / Permission denied，请继续点击“系统选择器新建单个测试文件”，在同一个 Test 文件夹保存，然后截图结果。"
             }
             runOnUiThread { testButton.isEnabled = true; show(result) }
+        }.start()
+    }
+
+    private fun testSingleFile(file: Uri, persisted: Boolean) {
+        show("已获得单个文件 URI，正在验证写入、读回和覆盖…")
+        Thread {
+            var stage = "首次写入"
+            val result = try {
+                val first = "HiFairy single-file initial ${LocalDateTime.now()}"
+                val second = "HiFairy single-file overwritten ${LocalDateTime.now()}"
+                write(file, first)
+                stage = "首次读回"
+                if (read(file) != first) throw IllegalStateException("首次读回内容不一致")
+                stage = "覆盖写入"
+                write(file, second)
+                stage = "覆盖后读回"
+                if (read(file) != second) throw IllegalStateException("覆盖后读回内容不一致")
+                "单文件测试通过 ✓\n文件提供者：${file.authority}\n持久授权：${if (persisted) "有效" else "未授予（当前会话仍可测试）"}\n首次写入、读回、覆盖、再次读回均成功。\n请在鸿蒙文件管理中确认该文件。"
+            } catch (error: Exception) {
+                "单文件测试失败，阶段：$stage\n文件提供者：${file.authority}\n持久授权：${if (persisted) "有效" else "未授予"}\n${error.javaClass.simpleName}: ${error.message}"
+            }
+            runOnUiThread { show(result) }
         }.start()
     }
 
