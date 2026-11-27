@@ -1150,6 +1150,9 @@ class MainActivity : ComponentActivity() {
                                 Text("进入隐私安全  ›", color = ThemeTokens.accent, modifier = Modifier.fillMaxWidth()
                                     .clickable { startActivity(Intent(this@MainActivity, PrivacySettingsActivity::class.java)) }.padding(vertical = 8.dp))
                             }
+                            SettingsCard("PHONE // WORKSPACE", "手机工作区") {
+                                Text("工作区挂载仍在独立测试包验证。请选择卓易通兼容区内的普通文件夹；“我的设备（鸿蒙）”映射目录及系统敏感目录不可作为可写工作区。", color = ThemeTokens.secondary, fontSize = 12.sp)
+                            }
                             SettingsCard("STARTUP // MOTION", "启动体验") {
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween) {

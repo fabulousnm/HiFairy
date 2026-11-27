@@ -96,6 +96,10 @@ class WorkspaceLabActivity : Activity() {
         }
         root.addView(testButton)
         root.addView(Button(this).apply {
+            text = "测试 Agent 受限工作区操作"
+            setOnClickListener { testAgentWorkspace() }
+        })
+        root.addView(Button(this).apply {
             text = "系统选择器新建单个测试文件"
             setOnClickListener {
                 startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
@@ -184,6 +188,48 @@ class WorkspaceLabActivity : Activity() {
             }
             runOnUiThread { show(result) }
         }.start()
+    }
+
+    private fun testAgentWorkspace() {
+        val tree = prefs.getString(TREE, null)?.let(Uri::parse)
+        if (tree == null || !grant(tree)) { show("请先挂载一个可写的兼容区测试文件夹。"); return }
+        show("正在运行 Agent 文件工具探针：列目录、拒绝越界、创建、覆盖、读回…")
+        Thread {
+            var stage = "列目录"
+            val result = try {
+                val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+                val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+                val names = mutableListOf<String>()
+                contentResolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { cursor ->
+                    while (cursor.moveToNext() && names.size < 20) names.add(cursor.getString(0))
+                } ?: throw IllegalStateException("目录列表不可读取")
+                stage = "拒绝越界路径"
+                val escaped = runCatching { checkedAgentName("../outside.txt") }.isFailure
+                if (!escaped) throw IllegalStateException("路径越界未被拦截")
+                stage = "创建测试文件"
+                val name = checkedAgentName("HiFairy-agent-test-${UUID.randomUUID().toString().take(8)}.txt")
+                val file = DocumentsContract.createDocument(contentResolver, parent, "text/plain", name)
+                    ?: throw IllegalStateException("文件提供者拒绝创建")
+                stage = "首次写入和读回"
+                write(file, "Agent workspace initial")
+                if (read(file) != "Agent workspace initial") throw IllegalStateException("首次读回不一致")
+                stage = "覆盖写入和读回"
+                write(file, "Agent workspace updated")
+                if (read(file) != "Agent workspace updated") throw IllegalStateException("覆盖读回不一致")
+                "Agent 文件工具探针通过 ✓\n目录现有条目（最多 20 个）：${names.joinToString().ifBlank { "空" }}\n越界路径：已拒绝 ✓\n测试文件：$name\n创建、覆盖和读回：成功 ✓\n此探针在本机执行，不代表电脑 DSH 已能直接调用手机文件工具。"
+            } catch (error: Exception) {
+                "Agent 文件工具探针失败，阶段：$stage\n${error.javaClass.simpleName}: ${error.message}"
+            }
+            runOnUiThread { show(result) }
+        }.start()
+    }
+
+    private fun checkedAgentName(name: String): String {
+        require(name.startsWith("HiFairy-agent-test-") && name.endsWith(".txt") &&
+            name.all { it.isLetterOrDigit() || it == '-' || it == '.' } && name.length <= 64) {
+            "Agent 请求只能创建本测试包命名的文本文件，且不能包含路径分隔符"
+        }
+        return name
     }
 
     private fun write(file: Uri, value: String) {
