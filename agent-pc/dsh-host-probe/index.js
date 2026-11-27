@@ -6,7 +6,7 @@ import { listWorkspaceDirectory, uploadWorkspaceFile, downloadWorkspaceFile,
   listComputerRoots, listComputerDirectory, uploadComputerFile, downloadComputerFile } from './workspace-files.js'
 
 export const name = 'hifairy-dsh-host-probe'
-export const inject = ['sessionController', 'workspaceRegistry', 'agentPresets', 'fileUploads']
+export const inject = ['sessionController', 'workspaceRegistry', 'agentPresets', 'fileUploads', 'sessions', 'permissionPresets']
 
 function authorized(request, token) {
   const candidate = request.headers.authorization?.replace(/^Bearer /, '') ?? ''
@@ -30,6 +30,34 @@ async function readJson(request) {
 }
 
 export function createProbeServer(controller, token, options = {}) {
+  const subscribers = new Map()
+  const clients = new Map()
+  const approvals = new Map()
+  const approvalBridge = {
+    hasSubscriber: id => (subscribers.get(id) ?? 0) > 0,
+    offer(request, next) {
+      const session = request.agent?.session
+      if (!session || !this.hasSubscriber(session.id)) return next()
+      const last = session.eventAt(session.seq - 1)
+      const id = last?.type === 'approval/asked' ? last.data?.id : null
+      if (!id) return next()
+      return new Promise(resolve => {
+        const key = `${session.id}:${id}`
+        const done = outcome => {
+          if (!approvals.has(key)) return
+          approvals.delete(key)
+          request.signal?.removeEventListener('abort', onAbort)
+          resolve(outcome === 'delegate' ? next() : outcome)
+        }
+        const onAbort = () => done('cancelled')
+        approvals.set(key, { sessionId: session.id, id, toolName: request.toolName, reason: request.reason ?? '', done })
+        request.signal?.addEventListener('abort', onAbort, { once: true })
+        const frame = `data: ${JSON.stringify({ type: 'event', event: { type: 'approval/asked', data: { id } } })}\n\n`
+        for (const client of clients.get(session.id) ?? []) client.write(frame)
+      })
+    }
+  }
+  options.approvalBridge = approvalBridge
   return createServer(async (request, response) => {
     if (!authorized(request, token)) return respond(response, 401, { error: 'unauthorized' })
     if (request.method === 'GET' && request.url === '/workspaces') {
@@ -49,7 +77,42 @@ export function createProbeServer(controller, token, options = {}) {
         })) })
       } catch (error) { return respond(response, 503, { error: 'modes_unavailable', detail: String(error?.message ?? error) }) }
     }
+    if (request.method === 'GET' && request.url === '/permissions') {
+      try { return respond(response, 200, options.permissionPresets.catalog()) }
+      catch (error) { return respond(response, 503, { error: 'permissions_unavailable', detail: String(error?.message ?? error) }) }
+    }
     const parsed = new URL(request.url ?? '/', 'http://localhost')
+    const approvalMatch = /^\/sessions\/(session-[a-z0-9-]+)\/approvals(?:\/([a-zA-Z0-9-]+))?$/.exec(parsed.pathname)
+    if (approvalMatch) {
+      const [ , sessionId, id ] = approvalMatch
+      if (request.method === 'GET' && !id) return respond(response, 200, { items: [...approvals.values()]
+        .filter(item => item.sessionId === sessionId).map(({ sessionId, id, toolName, reason }) => ({ sessionId, id, toolName, reason })) })
+      if (request.method === 'POST' && id) {
+        const pending = approvals.get(`${sessionId}:${id}`)
+        if (!pending) return respond(response, 409, { error: 'approval_expired' })
+        const body = await readJson(request)
+        if (!['allowed-once', 'rejected'].includes(body.outcome)) return respond(response, 400, { error: 'invalid_outcome' })
+        pending.done(body.outcome)
+        return respond(response, 200, { outcome: body.outcome })
+      }
+      return respond(response, 405, { error: 'method_not_allowed' })
+    }
+    const permissionMatch = /^\/sessions\/(session-[a-z0-9-]+)\/permission$/.exec(parsed.pathname)
+    if (permissionMatch) {
+      const session = options.sessions.list().find(item => item.id === permissionMatch[1])
+      if (!session) return respond(response, 404, { error: 'session_not_found' })
+      if (request.method === 'GET') return respond(response, 200, { value: options.permissionPresets.current(session) })
+      if (request.method === 'POST') {
+        try {
+          const body = await readJson(request)
+          if (typeof body.value !== 'string' || !options.permissionPresets.catalog().options.some(item => item.value === body.value))
+            return respond(response, 400, { error: 'permission_not_found' })
+          options.permissionPresets.set(session, body.value)
+          return respond(response, 200, { value: options.permissionPresets.current(session) })
+        } catch (error) { return respond(response, 503, { error: 'permission_update_failed', detail: String(error?.message ?? error) }) }
+      }
+      return respond(response, 405, { error: 'method_not_allowed' })
+    }
     const workspaceMatch = /^\/workspaces\/([a-zA-Z0-9_-]+)\/(files|upload|download)$/.exec(parsed.pathname)
     const computerMatch = /^\/filesystem\/(roots|files|upload|download)$/.exec(parsed.pathname)
     if (workspaceMatch || computerMatch) {
@@ -108,7 +171,15 @@ export function createProbeServer(controller, token, options = {}) {
         const agentPreset = body.agentPreset || options.agentPresets.defaultId
         if (!presets.some(item => item.id === agentPreset && !item.error && !item.reason))
           return respond(response, 400, { error: 'mode_not_found' })
+        const permission = body.permission
+        if (permission !== undefined && (typeof permission !== 'string' || !options.permissionPresets.catalog().options.some(item => item.value === permission)))
+          return respond(response, 400, { error: 'permission_not_found' })
         const result = await controller.create({ workspaceId, agentPreset })
+        if (permission !== undefined) {
+          const session = options.sessions.list().find(item => item.id === result.sessionId)
+          if (!session) return respond(response, 503, { error: 'session_not_found_after_create' })
+          options.permissionPresets.set(session, permission)
+        }
         return respond(response, 201, { sessionId: result.sessionId })
       } catch (error) {
         return respond(response, 503, { error: 'host_unavailable', detail: String(error?.message ?? error) })
@@ -184,6 +255,9 @@ export function createProbeServer(controller, token, options = {}) {
         }
       }
       response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive' })
+      subscribers.set(sessionId, (subscribers.get(sessionId) ?? 0) + 1)
+      if (!clients.has(sessionId)) clients.set(sessionId, new Set())
+      clients.get(sessionId).add(response)
       try {
         const stream = controller.follow({ address: { kind: 'session', sessionId }, maxMessages: 20, assistantStream: true }, abort.signal)[Symbol.asyncIterator]()
         for await (const frame of { [Symbol.asyncIterator]: () => stream }) {
@@ -192,14 +266,23 @@ export function createProbeServer(controller, token, options = {}) {
           else if (frame.type === 'assistant-stream') {
             const chunkType = frame.frame?.chunk?.type
             if (frame.frame?.type === 'start' || chunkType === 'block-start' || chunkType === 'text-delta') outgoing = frame
-          } else if (frame.type === 'event' && ['user/message', 'assistant/message', 'tool/call', 'tool/result', 'step/start', 'step/end', 'turn/end'].includes(frame.event?.type)) {
-            outgoing = { type: 'event', event: { type: frame.event.type } }
+          } else if (frame.type === 'event' && ['user/message', 'assistant/message', 'tool/call', 'tool/result', 'step/start', 'step/end', 'turn/end', 'approval/asked', 'approval/decided'].includes(frame.event?.type)) {
+            outgoing = { type: 'event', event: { type: frame.event.type,
+              ...frame.event.type.startsWith('approval/') ? { data: frame.event.data } : {} } }
           }
           if (outgoing) response.write(`data: ${JSON.stringify(outgoing)}\n\n`)
         }
       } catch (error) {
         if (!abort.signal.aborted) response.write(`event: error\ndata: ${JSON.stringify({ error: String(error?.message ?? error) })}\n\n`)
       } finally {
+        clients.get(sessionId)?.delete(response)
+        const count = (subscribers.get(sessionId) ?? 1) - 1
+        if (count > 0) subscribers.set(sessionId, count)
+        else {
+          subscribers.delete(sessionId)
+          clients.delete(sessionId)
+          for (const pending of [...approvals.values()].filter(item => item.sessionId === sessionId)) pending.done('delegate')
+        }
         response.end()
       }
       return
@@ -221,12 +304,14 @@ export function apply(ctx, config) {
   if (!config?.tokenFile) throw new Error('HiFairy probe requires a tokenFile')
   const token = readFileSync(config.tokenFile, 'utf8').trim()
   if (token.length < 32) throw new Error('HiFairy probe token must contain at least 32 characters')
-  const server = createProbeServer(ctx.sessionController, token, {
+  const bridgeOptions = {
     workspaceId: config.workspaceId, workspaceRegistry: ctx.workspaceRegistry, agentPresets: ctx.agentPresets,
-    fileUploads: ctx.fileUploads
-  })
+    fileUploads: ctx.fileUploads, sessions: ctx.sessions, permissionPresets: ctx.permissionPresets
+  }
+  const server = createProbeServer(ctx.sessionController, token, bridgeOptions)
   ctx.effect(() => {
     server.listen(config.port ?? 18765, '127.0.0.1')
     return () => server.close()
   })
+  ctx.on('approval/request', (request, next) => bridgeOptions.approvalBridge.offer(request, next), true)
 }

@@ -28,7 +28,7 @@ def _tokens(authorization: str | None) -> str:
 
 def _bridge_path(path: str) -> str:
     # Never allow callers to choose another local address or arbitrary path.
-    if path in {"sessions", "modes", "workspaces"}:
+    if path in {"sessions", "modes", "workspaces", "permissions"}:
         return "/" + path
     if path in {"filesystem/roots", "filesystem/files", "filesystem/upload", "filesystem/download"}:
         return "/" + path
@@ -36,9 +36,10 @@ def _bridge_path(path: str) -> str:
     if len(parts) == 3 and parts[0] == "workspaces" and parts[2] in {"files", "upload", "download"} and parts[1] and all(c.isascii() and (c.isalnum() or c in "-_") for c in parts[1]):
         return "/" + path
     valid_session = len(parts) >= 3 and parts[0] == "sessions" and parts[1].startswith("session-")
-    valid_suffix = len(parts) == 3 and parts[2] in {"messages", "snapshot", "events", "recent", "cancel", "attachments"}
+    valid_suffix = len(parts) == 3 and parts[2] in {"messages", "snapshot", "events", "recent", "cancel", "attachments", "permission", "approvals"}
+    valid_approval = len(parts) == 4 and parts[2] == "approvals" and parts[3] and all(c.isascii() and (c.isalnum() or c == "-") for c in parts[3])
     valid_detail = len(parts) == 5 and parts[2] == "details" and parts[3] in {"reasoning", "tool", "terminal", "commentary"} and parts[4] and all(c.isascii() and (c.isalnum() or c in "-_") for c in parts[4])
-    if valid_session and (valid_suffix or valid_detail):
+    if valid_session and (valid_suffix or valid_detail or valid_approval):
         suffix = parts[1][8:]
         if suffix and all(c.islower() or c.isdigit() or c == "-" for c in suffix):
             return "/" + path
@@ -81,7 +82,7 @@ async def agent_live(ws: WebSocket, session_id: str):
 async def agent_proxy(path: str, request: Request, authorization: str | None = Header(default=None)):
     bridge_token = _tokens(authorization)
     target = _bridge_path(path)
-    allowed = (request.method == "GET" and not target.endswith(("/messages", "/upload", "/cancel", "/attachments"))) or (request.method == "POST" and (target == "/sessions" or target.endswith(("/messages", "/upload", "/cancel", "/attachments"))))
+    allowed = (request.method == "GET" and not target.endswith(("/messages", "/upload", "/cancel", "/attachments")) and not "/approvals/" in target) or (request.method == "POST" and (target == "/sessions" or target.endswith(("/messages", "/upload", "/cancel", "/attachments", "/permission")) or "/approvals/" in target))
     if not allowed:
         raise HTTPException(405, "method_not_allowed")
     headers = {"Authorization": f"Bearer {bridge_token}"}

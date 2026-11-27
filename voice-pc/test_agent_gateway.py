@@ -39,6 +39,12 @@ def test_agent_gateway():
             assert (await client.get("/agent/other", headers={"Authorization": "Bearer mobile-secret"})).status_code == 404
             assert (await client.get("/agent/sessions", headers={"Authorization": "Bearer mobile-secret"})).status_code == 200
             assert (await client.get("/agent/modes", headers={"Authorization": "Bearer mobile-secret"})).status_code == 200
+            assert (await client.get("/agent/permissions", headers={"Authorization": "Bearer mobile-secret"})).status_code == 200
+            assert (await client.get("/agent/sessions/session-abc/permission", headers={"Authorization": "Bearer mobile-secret"})).status_code == 200
+            assert (await client.post("/agent/sessions/session-abc/permission", headers={"Authorization": "Bearer mobile-secret"}, json={"value": "workspace-write"})).status_code == 200
+            assert (await client.get("/agent/sessions/session-abc/approvals", headers={"Authorization": "Bearer mobile-secret"})).status_code == 200
+            assert (await client.post("/agent/sessions/session-abc/approvals/approval-1", headers={"Authorization": "Bearer mobile-secret"}, json={"outcome": "allowed-once"})).status_code == 200
+            assert (await client.get("/agent/sessions/session-abc/approvals/approval-1", headers={"Authorization": "Bearer mobile-secret"})).status_code == 405
             assert (await client.get("/agent/workspaces", headers={"Authorization": "Bearer mobile-secret"})).status_code == 200
             assert (await client.get("/agent/workspaces/project/files?path=child", headers={"Authorization": "Bearer mobile-secret"})).status_code == 200
             assert (await client.get("/agent/filesystem/roots", headers={"Authorization": "Bearer mobile-secret"})).status_code == 200
@@ -55,6 +61,11 @@ def test_agent_gateway():
             assert (await client.get("/agent/sessions/session-abc/details/tool/..", headers={"Authorization": "Bearer mobile-secret"})).status_code == 404
             assert calls == [("GET", "/sessions", "Bearer bridge-secret"),
                              ("GET", "/modes", "Bearer bridge-secret"),
+                             ("GET", "/permissions", "Bearer bridge-secret"),
+                             ("GET", "/sessions/session-abc/permission", "Bearer bridge-secret"),
+                             ("POST", "/sessions/session-abc/permission", "Bearer bridge-secret"),
+                             ("GET", "/sessions/session-abc/approvals", "Bearer bridge-secret"),
+                             ("POST", "/sessions/session-abc/approvals/approval-1", "Bearer bridge-secret"),
                              ("GET", "/workspaces", "Bearer bridge-secret"),
                              ("GET", "/workspaces/project/files", "Bearer bridge-secret"),
                              ("GET", "/filesystem/roots", "Bearer bridge-secret"),

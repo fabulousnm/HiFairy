@@ -106,3 +106,62 @@ test('expands the Host window until fifteen real turns are available', async () 
     assert.deepEqual(windows, [240, 480])
   } finally { await new Promise(resolve => server.close(resolve)) }
 })
+
+test('permission catalog and session selection use Host presets', async () => {
+  const session = { id: 'session-abc' }
+  let selected = 'workspace-write'
+  const options = { sessions: { list: () => [session] }, permissionPresets: {
+    catalog: () => ({ options: [{ value: 'workspace-write', name: 'Workspace' }, { value: 'danger-full-access', name: 'Full' }], defaultPreset: 'workspace-write' }),
+    current: () => selected, set: (_, value) => { selected = value }
+  } }
+  const token = 'p'.repeat(40)
+  const server = createProbeServer({}, token, options)
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`
+    const headers = { Authorization: `Bearer ${token}` }
+    assert.equal((await (await fetch(`${base}/permissions`, { headers })).json()).defaultPreset, 'workspace-write')
+    assert.equal((await (await fetch(`${base}/sessions/session-abc/permission`, { headers })).json()).value, selected)
+    const changed = await fetch(`${base}/sessions/session-abc/permission`, { method: 'POST', headers,
+      body: JSON.stringify({ value: 'danger-full-access' }) })
+    assert.equal(changed.status, 200)
+    assert.equal(selected, 'danger-full-access')
+    assert.equal((await fetch(`${base}/sessions/session-abc/permission`, { method: 'POST', headers,
+      body: JSON.stringify({ value: 'invalid' }) })).status, 400)
+  } finally { await new Promise(resolve => server.close(resolve)) }
+})
+
+test('a connected phone can answer approval and disconnect delegates to desktop', async () => {
+  const options = {}
+  const controller = { follow() {
+    return (async function* () {
+      yield { type: 'snapshot', cursor: 1 }
+      await new Promise(resolve => { controller.stop = resolve })
+    })()
+  } }
+  const token = 'q'.repeat(40)
+  const server = createProbeServer(controller, token, options)
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const base = `http://127.0.0.1:${server.address().port}`
+  const headers = { Authorization: `Bearer ${token}` }
+  const abort = new AbortController()
+  try {
+    const stream = await fetch(`${base}/sessions/session-abc/events`, { headers, signal: abort.signal })
+    assert.equal(stream.status, 200)
+    const agent = { session: { id: 'session-abc', seq: 2, eventAt: () => ({ type: 'approval/asked', data: { id: 'approval-one' } }) } }
+    const decision = options.approvalBridge.offer({ agent, toolName: 'ops_bash', reason: 'Run command' }, () => 'desktop')
+    assert.equal((await (await fetch(`${base}/sessions/session-abc/approvals`, { headers })).json()).items[0].toolName, 'ops_bash')
+    const answer = await fetch(`${base}/sessions/session-abc/approvals/approval-one`, { method: 'POST', headers,
+      body: JSON.stringify({ outcome: 'allowed-once' }) })
+    assert.equal(answer.status, 200)
+    assert.equal(await decision, 'allowed-once')
+    const delegated = options.approvalBridge.offer({ agent, toolName: 'ops_bash' }, () => 'desktop')
+    abort.abort()
+    controller.stop()
+    assert.equal(await delegated, 'desktop')
+  } finally {
+    abort.abort()
+    controller.stop?.()
+    await new Promise(resolve => server.close(resolve))
+  }
+})
