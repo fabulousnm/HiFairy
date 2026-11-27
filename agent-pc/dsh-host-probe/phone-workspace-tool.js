@@ -10,7 +10,7 @@ export function apply(ctx, config) {
     name: 'hifairy_phone_workspace_probe',
     description: '用户明确要求测试手机本地挂载工作区时使用。仅在当前手机 Agent 会话前台执行：列出少量文件名、拒绝越界路径，并创建和覆盖一个 HiFairy-agent-test- 前缀的测试文本。不会修改其他文件。',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
-    output: { schema: { type: 'object', properties: { text: { type: 'string', required: true } }, additionalProperties: false },
+    output: { schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },
       render: (_args, value) => [{ type: 'text', text: value.text }] },
     timeoutMs: 35000,
     async execute(_args, exec) {
