@@ -1,51 +1,47 @@
 param(
+    [ValidateSet('Full', 'Gateway')][string]$Mode,
     [string]$PythonPath = 'G:\HiFairy-voice-env\Scripts\python.exe',
+    [int]$Port = 8765,
     [switch]$StatusOnly
 )
-
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $output = Join-Path $root 'output'
 $vendor = Join-Path $root 'vendor'
 $cloudflared = Join-Path $vendor 'cloudflared-windows-amd64.exe'
-$server = Join-Path $root 'server.py'
 $tokenFile = Join-Path $vendor 'remote-test-token.txt'
 $agentTokenFile = Join-Path $vendor 'agent-mobile-token.txt'
-$serverLog = Join-Path $output 'server-launch.log'
-$serverError = Join-Path $output 'server-launch-error.log'
-$tunnelLog = Join-Path $output 'tunnel-launch.log'
-$tunnelError = Join-Path $output 'tunnel-launch-error.log'
-$localHealth = 'http://127.0.0.1:8765/health'
-
-function Test-Health([string]$url, [int]$timeoutSeconds = 8) {
-    try {
-        $result = Invoke-RestMethod -Uri $url -TimeoutSec $timeoutSeconds
-        return $result.ready -eq $true
-    } catch { return $false }
+$localHealth = "http://127.0.0.1:$Port/health"
+function Test-Health([string]$url, [int]$timeout = 4) {
+    try { return (Invoke-RestMethod -Uri $url -TimeoutSec $timeout).ready -eq $true } catch { return $false }
 }
-
-function Test-AgentBridge([string]$baseUrl) {
+function Find-TunnelUrl([string]$log) {
+    if (-not (Test-Path -LiteralPath $log)) { return $null }
+    $stream = [IO.File]::Open($log, 'Open', 'Read', 'ReadWrite')
     try {
-        $agentToken = [IO.File]::ReadAllText($agentTokenFile).Trim()
-        $result = Invoke-RestMethod -Uri "$baseUrl/agent/sessions" -Headers @{ Authorization = "Bearer $agentToken" } -TimeoutSec 8
-        return $null -ne $result.items
-    } catch { return $false }
-}
-
-function Find-TunnelUrl {
-    foreach ($log in @($tunnelError)) {
-        if (-not (Test-Path -LiteralPath $log)) { continue }
-        $stream = [IO.File]::Open($log, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
-        try {
-            $reader = New-Object IO.StreamReader($stream)
-            $content = $reader.ReadToEnd()
-        } finally { $stream.Dispose() }
-        $matches = [regex]::Matches($content, 'https://[a-z0-9-]+\.trycloudflare\.com')
-        if ($matches.Count -gt 0) { return $matches[$matches.Count - 1].Value }
-    }
+        $reader = [IO.StreamReader]::new($stream)
+        $matches = [regex]::Matches($reader.ReadToEnd(), 'https://[a-z0-9-]+\.trycloudflare\.com')
+        if ($matches.Count) { return $matches[$matches.Count - 1].Value }
+    } finally { $stream.Dispose() }
     return $null
 }
-
+if ($StatusOnly) {
+    if (-not (Test-Health $localHealth)) { throw '本地服务尚未启动。' }
+    $log = Get-ChildItem -LiteralPath $output -Filter 'tunnel-launch-*.err.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+    $url = if ($log) { Find-TunnelUrl $log } else { $null }
+    if (-not $url -or -not (Test-Health "$url/health")) { throw '公网通道尚未就绪。' }
+    Write-Host "公网地址：$url"
+    exit 0
+}
+if (-not $Mode) {
+    Write-Host '1. Fairy 语音模型 + Agent 网关 + 公网通道'
+    Write-Host '2. 仅 Agent 网关 + 公网通道（不加载语音模型）'
+    $choice = Read-Host '请选择 1 或 2'
+    $Mode = switch ($choice) { '1' { 'Full' } '2' { 'Gateway' } default { throw '请选择 1 或 2。' } }
+}
+if (-not (Test-Path -LiteralPath $PythonPath)) { throw "Python 环境不存在：$PythonPath" }
+if (-not (Test-Path -LiteralPath $cloudflared)) { throw "cloudflared 不存在：$cloudflared" }
+if (Test-Health $localHealth) { throw "本机 $Port 端口已有 HiFairy 服务；请先关闭旧服务。" }
 New-Item -ItemType Directory -Path $output -Force | Out-Null
 if (-not (Test-Path -LiteralPath $agentTokenFile)) {
     $bytes = New-Object byte[] 32
@@ -53,61 +49,78 @@ if (-not (Test-Path -LiteralPath $agentTokenFile)) {
     try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
     [IO.File]::WriteAllText($agentTokenFile, ([BitConverter]::ToString($bytes) -replace '-', '').ToLowerInvariant())
 }
-if (-not $StatusOnly) {
-    if (-not (Test-Path -LiteralPath $PythonPath)) { throw "Python 虚拟环境不存在：$PythonPath" }
-    if (-not (Test-Path -LiteralPath $cloudflared)) { throw "cloudflared 不存在：$cloudflared" }
-    if (-not (Test-Health $localHealth)) {
-        Write-Host '正在启动 Fairy 模型服务并预热，首次可能需要约 30 秒…'
-        Start-Process -FilePath $PythonPath -ArgumentList @('-u', $server) -WorkingDirectory $root -WindowStyle Hidden `
-            -RedirectStandardOutput $serverLog -RedirectStandardError $serverError | Out-Null
-        $ready = $false
-        for ($i = 0; $i -lt 90; $i++) {
-            if (Test-Health $localHealth) { $ready = $true; break }
-            Start-Sleep -Seconds 2
-        }
-        if (-not $ready) { throw "模型服务未在 180 秒内就绪。查看 $serverError" }
-    }
-    Write-Host 'Fairy 模型服务已就绪。'
-    $url = Find-TunnelUrl
-    if (-not $url -or -not (Test-Health "$url/health" 4)) {
-        Write-Host '正在启动临时公网通道…'
-        # A stale connector may keep the old log handle open while its health page
-        # still answers. Stop only this project's tunnel before replacing its log.
-        Get-CimInstance Win32_Process | Where-Object {
-            $_.Name -eq 'cloudflared-windows-amd64.exe' -and
-            $_.CommandLine -like '*tunnel --url http://127.0.0.1:8765*'
-        } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-        Start-Sleep -Milliseconds 500
-        Start-Process -FilePath $cloudflared -ArgumentList @('tunnel', '--url', 'http://127.0.0.1:8765', '--protocol', 'http2', '--no-autoupdate') `
-            -WorkingDirectory $root -WindowStyle Hidden -RedirectStandardOutput $tunnelLog -RedirectStandardError $tunnelError | Out-Null
-        $url = $null
-        for ($i = 0; $i -lt 30; $i++) {
-            Start-Sleep -Seconds 2
-            $candidate = Find-TunnelUrl
-            if ($candidate -and (Test-Health "$candidate/health" 4)) { $url = $candidate; break }
-            if ($i -gt 0 -and $i % 5 -eq 0) { Write-Host "公网通道仍在建立（已等待约 $($i * 2) 秒）…" }
-        }
-        if (-not $url) { throw "公网通道未在 60 秒内就绪。查看 $tunnelError" }
-    }
-} else {
-    if (-not (Test-Health $localHealth)) { throw '本地 Fairy 服务尚未启动。' }
-    $url = Find-TunnelUrl
-    if (-not $url -or -not (Test-Health "$url/health" 4)) { throw '公网通道尚未就绪。' }
+# A Windows job kills all assigned children when this PowerShell process exits,
+# including when its console window is closed without running finally.
+Add-Type -TypeDefinition @'
+using System;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+public static class HiFairyJob {
+  [StructLayout(LayoutKind.Sequential)] struct IO { public long A,B,C,D,E,F; }
+  [StructLayout(LayoutKind.Sequential)] struct Basic { public long A,B; public uint Flags; public UIntPtr C,D; public uint E; public UIntPtr F; public uint G,H; }
+  [StructLayout(LayoutKind.Sequential)] struct Extended { public Basic Basic; public IO Io; public UIntPtr A,B,C,D; }
+  [DllImport("kernel32.dll",SetLastError=true)] static extern IntPtr CreateJobObject(IntPtr p, string n);
+  [DllImport("kernel32.dll",SetLastError=true)] static extern bool SetInformationJobObject(IntPtr j, int c, ref Extended x, uint size);
+  [DllImport("kernel32.dll",SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr j, IntPtr p);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+  public static IntPtr Create() { var j=CreateJobObject(IntPtr.Zero,null); if(j==IntPtr.Zero) throw new System.ComponentModel.Win32Exception();
+    var x=new Extended(); x.Basic.Flags=0x2000;
+    if(!SetInformationJobObject(j,9,ref x,(uint)Marshal.SizeOf(x))) { CloseHandle(j); throw new System.ComponentModel.Win32Exception(); } return j; }
+  public static void Add(IntPtr j,int pid) { using(var p=Process.GetProcessById(pid))
+    if(!AssignProcessToJobObject(j,p.Handle)) throw new System.ComponentModel.Win32Exception(); }
+  public static void Close(IntPtr j) { if(j!=IntPtr.Zero) CloseHandle(j); }
 }
-
-if (-not (Test-Path -LiteralPath $tokenFile)) { throw "令牌文件不存在：$tokenFile" }
-$token = [IO.File]::ReadAllText($tokenFile).Trim()
-if ([string]::IsNullOrWhiteSpace($token)) { throw '令牌文件为空。' }
-$socketUrl = ($url -replace '^https://', 'wss://') + '/stream'
-Write-Host ''
-Write-Host '请在 HiFairy 手机设置 → 语音播放 中填写：' -ForegroundColor Cyan
-Write-Host "语音服务地址：$socketUrl" -ForegroundColor Green
-Write-Host "访问令牌：$token" -ForegroundColor Yellow
-Write-Host "Agent 地址：$url/agent" -ForegroundColor Green
-Write-Host "Agent 令牌：$([IO.File]::ReadAllText($agentTokenFile).Trim())" -ForegroundColor Yellow
-if (Test-AgentBridge $url) {
-    Write-Host 'Agent 桥接已就绪。' -ForegroundColor Green
-} else {
-    Write-Warning 'Agent 桥接暂不可用；语音服务与公网地址仍可使用。请启动 DSH Desktop 后再次运行本脚本检查 Agent。'
+'@
+$job = [HiFairyJob]::Create()
+try {
+    $runId = [guid]::NewGuid().ToString('N')
+    $serverOut = Join-Path $output "server-launch-$runId.out.log"
+    $serverErr = Join-Path $output "server-launch-$runId.err.log"
+    $tunnelOut = Join-Path $output "tunnel-launch-$runId.out.log"
+    $tunnelErr = Join-Path $output "tunnel-launch-$runId.err.log"
+    $script = if ($Mode -eq 'Full') { 'server.py' } else { 'gateway_only.py' }
+    Write-Host $(if ($Mode -eq 'Full') { '正在加载 Fairy 模型并预热…' } else { '正在启动轻量 Agent 网关…' })
+    $server = Start-Process -FilePath $PythonPath -ArgumentList @('-u', (Join-Path $root $script), '--port', "$Port") -WorkingDirectory $root `
+        -WindowStyle Hidden -PassThru -RedirectStandardOutput $serverOut -RedirectStandardError $serverErr
+    [HiFairyJob]::Add($job, $server.Id)
+    $ready = $false
+    for ($i=0; $i -lt 90; $i++) {
+        if (Test-Health $localHealth 2) { $ready=$true; break }
+        if ($server.HasExited) { break }
+        Start-Sleep -Seconds 2
+    }
+    if (-not $ready) { throw "本地服务未就绪；查看 $serverErr" }
+    Write-Host '正在启动临时公网通道…'
+    $tunnel = Start-Process -FilePath $cloudflared `
+        -ArgumentList @('tunnel','--url',"http://127.0.0.1:$Port",'--protocol','http2','--no-autoupdate') `
+        -WorkingDirectory $root -WindowStyle Hidden -PassThru -RedirectStandardOutput $tunnelOut -RedirectStandardError $tunnelErr
+    [HiFairyJob]::Add($job, $tunnel.Id)
+    $url = $null
+    for ($i=0; $i -lt 30; $i++) {
+        Start-Sleep -Seconds 2
+        if ($tunnel.HasExited) { break }
+        $candidate = Find-TunnelUrl $tunnelErr
+        if ($candidate -and (Test-Health "$candidate/health")) { $url=$candidate; break }
+        if ($i -gt 0 -and $i % 5 -eq 0) { Write-Host "通道建立中，已等待约 $($i * 2) 秒…" }
+    }
+    if (-not $url) { throw "公网通道未就绪；查看 $tunnelErr" }
+    Write-Host "公网地址：$url" -ForegroundColor Green
+    Write-Host "Agent 地址：$url/agent" -ForegroundColor Green
+    Write-Host "Agent 令牌：$([IO.File]::ReadAllText($agentTokenFile).Trim())" -ForegroundColor Yellow
+    if ($Mode -eq 'Full') {
+        if (-not (Test-Path -LiteralPath $tokenFile)) { throw "语音令牌不存在：$tokenFile" }
+        Write-Host "语音服务地址：$(($url -replace '^https://','wss://') + '/stream')" -ForegroundColor Green
+        Write-Host "语音访问令牌：$([IO.File]::ReadAllText($tokenFile).Trim())" -ForegroundColor Yellow
+    } else { Write-Host '本次未加载 Fairy 模型，语音播放不可用。' }
+    try {
+        $agentToken = [IO.File]::ReadAllText($agentTokenFile).Trim()
+        $bridge = Invoke-RestMethod -Uri "$url/agent/sessions" -Headers @{Authorization="Bearer $agentToken"} -TimeoutSec 5
+        if ($null -eq $bridge.items) { throw 'empty' }
+        Write-Host 'Agent 桥接已就绪。' -ForegroundColor Green
+    } catch { Write-Warning 'DSH Agent 桥接暂不可用，请启动 DSH Desktop。' }
+    Write-Host '按回车停止；直接关闭此窗口也会清理本次启动的进程。'
+    [void][Console]::ReadLine()
+} finally {
+    [HiFairyJob]::Close($job)
+    Write-Host '已关闭通道并释放本次启动的服务进程。'
 }
-Write-Host '服务与通道在后台运行；Quick Tunnel 地址在重新建立后可能改变。'
