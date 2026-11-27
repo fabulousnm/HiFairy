@@ -115,6 +115,16 @@ export function createProbeServer(controller, token, options = {}) {
             typeof body.content === 'string' && body.content.length <= 2000)
           return respond(response, 200, await phoneWorkspace.offer(phoneCommandMatch[1],
             { action: 'test_write', name: body.name, content: body.content }))
+        if (['list_path', 'read_text', 'write_text', 'mkdir', 'rename', 'delete_file'].includes(body.action) &&
+            typeof body.path === 'string' && body.path.length <= 512 &&
+            (body.content === undefined || typeof body.content === 'string' && body.content.length <= 8000) &&
+            (body.newName === undefined || typeof body.newName === 'string' && body.newName.length <= 120) &&
+            (body.overwrite === undefined || typeof body.overwrite === 'boolean') &&
+            (body.offset === undefined || Number.isInteger(body.offset) && body.offset >= 0 && body.offset <= 1000000))
+          return respond(response, 200, await phoneWorkspace.offer(phoneCommandMatch[1], {
+            action: body.action, path: body.path, content: body.content ?? '',
+            overwrite: body.overwrite ?? false, newName: body.newName ?? '', offset: body.offset ?? 0
+          }))
         return respond(response, 400, { error: 'invalid_phone_command' })
       } catch (error) { return respond(response, 400, { error: String(error?.message ?? error) }) }
     }

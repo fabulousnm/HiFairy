@@ -403,6 +403,10 @@ internal class AgentConnection(private val settings: SecureSettings, private val
                     "list" -> store.listPage(frame.getInt("offset"))
                     "test_write" -> store.testWrite(frame.getString("name"), frame.getString("content"))
                     "batch_probe" -> store.batchProbe()
+                    "list_path", "read_text", "write_text", "mkdir", "rename", "delete_file" ->
+                        store.workspaceOperation(frame.getString("action"), frame.getString("path"),
+                            frame.optString("content"), frame.optBoolean("overwrite"),
+                            frame.optString("newName"), frame.optInt("offset"))
                     else -> "未知手机工作区请求，已拒绝。"
                 }
             }.getOrElse { "手机工作区操作失败：${it.javaClass.simpleName}: ${it.message}" }

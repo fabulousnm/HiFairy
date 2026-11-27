@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 import java.util.UUID
 
 /** A user selected SAF tree; no raw filesystem path is accepted from the PC. */
@@ -192,6 +194,154 @@ internal class PhoneWorkspaceStore(private val context: Context) {
             while (cursor.moveToNext()) names += cursor.getString(0)
         } ?: error("无法列目录")
         return names
+    }
+
+    private data class WorkspaceEntry(val uri: Uri, val id: String, val mime: String)
+
+    private fun pathParts(path: String): List<String> {
+        require(path.length <= 512 && !path.startsWith('/') && '\\' !in path && ':' !in path) { "只允许挂载工作区内的相对路径" }
+        if (path.isEmpty()) return emptyList()
+        return path.split('/').also { parts ->
+            require(parts.size <= 12 && parts.all { part ->
+                part.isNotBlank() && part != "." && part != ".." && part.length <= 120 &&
+                    part.none { it.code < 32 || it == '\u007f' }
+            }) { "路径包含无效片段" }
+        }
+    }
+
+    private fun findChild(tree: Uri, parentId: String, name: String): WorkspaceEntry? {
+        val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId)
+        resolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_MIME_TYPE), null, null, null)?.use { cursor ->
+            while (cursor.moveToNext()) if (cursor.getString(0) == name) {
+                val id = cursor.getString(1)
+                return WorkspaceEntry(DocumentsContract.buildDocumentUriUsingTree(tree, id), id, cursor.getString(2))
+            }
+        } ?: error("无法读取目录")
+        return null
+    }
+
+    private fun resolve(tree: Uri, parts: List<String>): WorkspaceEntry {
+        val rootId = DocumentsContract.getTreeDocumentId(tree)
+        var current = WorkspaceEntry(DocumentsContract.buildDocumentUriUsingTree(tree, rootId), rootId,
+            DocumentsContract.Document.MIME_TYPE_DIR)
+        for (part in parts) {
+            require(current.mime == DocumentsContract.Document.MIME_TYPE_DIR) { "路径中包含非目录" }
+            current = findChild(tree, current.id, part) ?: error("路径不存在：$part")
+        }
+        return current
+    }
+
+    private fun textMime(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
+        "txt", "log" -> "text/plain"
+        "md", "markdown" -> "text/markdown"
+        "json" -> "application/json"
+        "csv" -> "text/csv"
+        "xml" -> "text/xml"
+        "yaml", "yml" -> "text/yaml"
+        "kt", "java", "js", "ts", "py", "sh", "ps1", "html", "css" -> "text/plain"
+        else -> error("仅支持明确的文本扩展名")
+    }
+
+    private fun readText(uri: Uri): String {
+        val bytes = resolver.openInputStream(uri)?.use { stream ->
+            val buffer = ByteArray(12001)
+            var used = 0
+            while (used < buffer.size) {
+                val count = stream.read(buffer, used, buffer.size - used)
+                if (count < 0) break
+                used += count
+            }
+            val bytes = buffer.copyOf(used)
+            require(bytes.size <= 12000) { "文本超过 12 KB，请使用较小文件" }
+            bytes
+        } ?: error("无法读取文件")
+        val text = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString()
+        require('\u0000' !in text) { "目标不是文本文件" }
+        return text
+    }
+
+    fun workspaceOperation(action: String, path: String, content: String = "", overwrite: Boolean = false,
+                           newName: String = "", offset: Int = 0): String {
+        val tree = authorizedTree() ?: return "手机工作区未挂载或授权已失效。"
+        val parts = pathParts(path)
+        val rootId = DocumentsContract.getTreeDocumentId(tree)
+        return when (action) {
+            "list_path" -> {
+                require(offset in 0..1000000) { "无效分页位置" }
+                val folder = resolve(tree, parts)
+                require(folder.mime == DocumentsContract.Document.MIME_TYPE_DIR) { "目标不是目录" }
+                val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, folder.id)
+                val rows = mutableListOf<String>()
+                var total = 0
+                var chars = 0
+                var full = false
+                resolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_MIME_TYPE), null, null, null)?.use { cursor ->
+                    while (cursor.moveToNext()) {
+                        val name = cursor.getString(0)
+                        val row = (if (cursor.getString(1) == DocumentsContract.Document.MIME_TYPE_DIR) "[目录] " else "[文件] ") + name
+                        if (total >= offset && rows.size < 60 && !full) {
+                            if (rows.isEmpty() || chars + row.length + 1 <= 11000) {
+                                rows += row; chars += row.length + 1
+                            } else full = true
+                        }
+                        total++
+                    }
+                } ?: error("无法列目录")
+                val next = if (offset + rows.size < total) "下一页 offset=${offset + rows.size}" else "已到末页"
+                "手机工作区 ${path.ifEmpty { "/" }}：共 $total 项；${rows.joinToString("\n")}\n$next"
+            }
+            "read_text" -> {
+                require(parts.isNotEmpty()) { "请选择文件" }
+                textMime(parts.last())
+                val entry = resolve(tree, parts)
+                require(entry.mime != DocumentsContract.Document.MIME_TYPE_DIR) { "目标是目录" }
+                "手机文件 $path 的内容：\n${readText(entry.uri)}"
+            }
+            "write_text", "mkdir" -> {
+                require(parts.isNotEmpty()) { "请选择目标名称" }
+                val parent = resolve(tree, parts.dropLast(1))
+                require(parent.mime == DocumentsContract.Document.MIME_TYPE_DIR) { "父路径不是目录" }
+                val existing = findChild(tree, parent.id, parts.last())
+                if (action == "mkdir") {
+                    require(existing == null) { "目录或文件已存在" }
+                    requireNotNull(DocumentsContract.createDocument(resolver, parent.uri,
+                        DocumentsContract.Document.MIME_TYPE_DIR, parts.last())) { "创建目录失败" }
+                    "已在手机工作区新建目录：$path"
+                } else {
+                    val mime = textMime(parts.last())
+                    require(content.toByteArray(Charsets.UTF_8).size <= 8000) { "写入内容超过 8 KB" }
+                    require(existing == null || overwrite) { "文件已存在；如需覆盖须明确设置 overwrite=true" }
+                    require(existing == null || existing.mime != DocumentsContract.Document.MIME_TYPE_DIR) { "目标是目录" }
+                    if (existing != null) readText(existing.uri)
+                    val file = existing?.uri ?: DocumentsContract.createDocument(resolver, parent.uri, mime, parts.last())
+                        ?: error("创建文件失败")
+                    resolver.openOutputStream(file, "wt")?.use { it.write(content.toByteArray(Charsets.UTF_8)) }
+                        ?: error("写入失败")
+                    check(readText(file) == content) { "写入后读回不一致" }
+                    "已在手机工作区${if (existing == null) "新建" else "覆盖"}文本并读回一致：$path"
+                }
+            }
+            "rename", "delete_file" -> {
+                require(parts.isNotEmpty()) { "不能修改工作区根目录" }
+                val entry = resolve(tree, parts)
+                if (action == "rename") {
+                    val target = pathParts(newName)
+                    require(target.size == 1) { "新名称只能是同目录的文件或目录名" }
+                    val parent = resolve(tree, parts.dropLast(1))
+                    require(findChild(tree, parent.id, newName) == null) { "新名称已存在" }
+                    requireNotNull(DocumentsContract.renameDocument(resolver, entry.uri, newName)) { "重命名失败" }
+                    "已重命名手机工作区条目：$path → ${parts.dropLast(1).plus(newName).joinToString("/")}"
+                } else {
+                    require(entry.mime != DocumentsContract.Document.MIME_TYPE_DIR) { "只能删除文件，不能删除目录" }
+                    check(DocumentsContract.deleteDocument(resolver, entry.uri)) { "删除失败" }
+                    "已删除手机工作区文件：$path"
+                }
+            }
+            else -> "未知手机工作区操作，已拒绝。"
+        }
     }
 
     private fun authorizedTree(): Uri? = mountedUri()?.takeIf { tree ->

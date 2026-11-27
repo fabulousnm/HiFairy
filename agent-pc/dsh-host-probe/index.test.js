@@ -68,6 +68,22 @@ test('phone workspace probe is delivered only to the active session and returns 
     })
     assert.equal(batchAccepted.status, 200)
     assert.equal((await batchCommand).status, 200)
+    for (const action of ['list_path', 'read_text', 'write_text', 'mkdir', 'rename', 'delete_file']) {
+      const body = { action, path: 'test/note.txt', content: 'hello', overwrite: true, newName: 'renamed.txt', offset: 0 }
+      const commandPromise = fetch(`${base}/sessions/session-test/phone-workspace-command`, {
+        method: 'POST', headers, body: JSON.stringify(body)
+      })
+      const actionFrame = await reader.read()
+      const payload = new TextDecoder().decode(actionFrame.value)
+      assert.match(payload, new RegExp(`"action":"${action}"`))
+      const actionId = payload.match(/"id":"([a-f0-9-]{36})"/)
+      assert.ok(actionId)
+      const reply = await fetch(`${base}/sessions/session-test/phone-workspace-result`, {
+        method: 'POST', headers, body: JSON.stringify({ id: actionId[1], text: `${action} ok` })
+      })
+      assert.equal(reply.status, 200)
+      assert.deepEqual(await (await commandPromise).json(), { text: `${action} ok` })
+    }
     const malformed = await fetch(`${base}/sessions/session-test/phone-workspace-command`, {
       method: 'POST', headers, body: JSON.stringify({ action: 'delete', name: 'file' })
     })

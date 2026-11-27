@@ -16,6 +16,41 @@ export function apply(ctx, config) {
     if (!response.ok) return { text: `手机工作区桥接返回 ${response.status}` }
     return response.json()
   }
+  function registerWorkspaceTool(toolName, description, properties, required, makeBody) {
+    ctx.effect(() => ctx.tools.register({
+      name: toolName, description,
+      parameters: { type: 'object', properties, required, additionalProperties: false },
+      output, timeoutMs: 35000,
+      execute(args, exec) {
+        const sessionId = exec?.agent?.session?.id
+        if (!sessionId) return { text: '无法识别当前 DSH 会话。' }
+        return command(sessionId, makeBody(args))
+      }
+    }))
+  }
+  const path = { type: 'string', description: '手机设置中手动挂载目录内的相对路径；根目录填空字符串，子目录用 / 分隔' }
+  registerWorkspaceTool('hifairy_phone_list',
+    '当用户要求查看手机端挂载文件夹、列手机工作区文件或查找其中的文件时直接使用。按需分页，只读取手动挂载目录及子目录，不访问电脑工作区。',
+    { path, offset: { type: 'integer', description: '分页起点，首次为 0；根据返回的下一页 offset 继续' } }, ['path', 'offset'],
+    args => ({ action: 'list_path', path: args.path, offset: args.offset }))
+  registerWorkspaceTool('hifairy_phone_read_text',
+    '当用户要读取或分析手机端挂载文件夹中的文本、Markdown、JSON 或代码文件时直接使用。只读相对路径，单次最多 12 KB。',
+    { path }, ['path'], args => ({ action: 'read_text', path: args.path }))
+  registerWorkspaceTool('hifairy_phone_write_text',
+    '当用户说“输出到手机端的挂载文件夹中”“保存到手机工作区”或要求修改其中的文本文件时直接使用。只能写入已手动挂载目录内的 UTF-8 文本；新建时 overwrite=false，用户明确要求覆盖现有文件时才设 true；最多 8 KB。',
+    { path, content: { type: 'string', description: '要写入的完整 UTF-8 文本，最多 8 KB' },
+      overwrite: { type: 'boolean', description: '只在用户明确要求覆盖现有文件时设 true；新建设 false' } },
+    ['path', 'content', 'overwrite'], args => ({ action: 'write_text', path: args.path, content: args.content, overwrite: args.overwrite }))
+  registerWorkspaceTool('hifairy_phone_mkdir',
+    '当用户要求在手机端挂载文件夹中新建子文件夹时直接使用；不能覆盖已有条目。',
+    { path }, ['path'], args => ({ action: 'mkdir', path: args.path }))
+  registerWorkspaceTool('hifairy_phone_rename',
+    '仅当用户明确要求重命名手机端挂载工作区的文件或目录时使用；在同一父目录内改名，不能覆盖已有条目。',
+    { path, newName: { type: 'string', description: '同一目录内的新名称，不含斜杠' } },
+    ['path', 'newName'], args => ({ action: 'rename', path: args.path, newName: args.newName }))
+  registerWorkspaceTool('hifairy_phone_delete_file',
+    '仅当用户明确要求删除手机端挂载工作区的某个文件时使用。只删除单个文件，不删除目录或递归删除。',
+    { path }, ['path'], args => ({ action: 'delete_file', path: args.path }))
   ctx.effect(() => ctx.tools.register({
     name: 'hifairy_phone_workspace_batch_probe',
     description: '用户要求一次验证六项手机工作区能力时使用：分页列目录、新建测试子目录、新建测试文本、读取、覆盖、进入子目录并返回。只在当前手机 Agent 会话前台运行，只留下 HiFairy-agent-test- 前缀的测试目录和文本，不修改已有文件。',
