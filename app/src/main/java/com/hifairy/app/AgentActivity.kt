@@ -3,10 +3,7 @@ package com.hifairy.app
 import android.os.Bundle
 import android.os.Build
 import android.Manifest
-import android.app.Notification
-import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.pm.PackageManager
 import android.content.ClipData
@@ -15,6 +12,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import android.media.MediaPlayer
@@ -102,13 +100,11 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
 
-private data class AgentSession(val id: String, val title: String, val running: Boolean = false)
-private data class AgentItem(val id: String, val kind: String, val text: String, val title: String, val detailKey: String, val parentId: String, val hasResult: Boolean)
-private data class AgentDetail(val text: String = "", val input: String = "", val output: String = "", val terminal: Boolean = false)
-private data class AgentChoice(val id: String, val title: String, val isDefault: Boolean = false)
-private data class AgentApproval(val id: String, val toolName: String, val reason: String)
-private const val AGENT_CHANNEL = "hifairy_agent_progress"
-private const val AGENT_NOTIFICATION = 4107
+internal data class AgentSession(val id: String, val title: String, val running: Boolean = false)
+internal data class AgentItem(val id: String, val kind: String, val text: String, val title: String, val detailKey: String, val parentId: String, val hasResult: Boolean)
+internal data class AgentDetail(val text: String = "", val input: String = "", val output: String = "", val terminal: Boolean = false)
+internal data class AgentChoice(val id: String, val title: String, val isDefault: Boolean = false)
+internal data class AgentApproval(val id: String, val toolName: String, val reason: String)
 
 class AgentApprovalReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -120,15 +116,14 @@ class AgentApprovalReceiver : BroadcastReceiver() {
             try {
                 val api = AgentConnection(SecureSettings(context))
                 try { api.decideApproval(session, approval, allow) } finally { api.close() }
-                (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(AGENT_NOTIFICATION)
             } catch (_: Exception) { }
             finally { pending.finish() }
         }.start()
     }
 }
-private data class AgentFile(val name: String, val directory: Boolean)
-private data class AgentFolder(val path: String, val parent: String?, val items: List<AgentFile>)
-private data class AgentUpload(val name: String, val path: String)
+internal data class AgentFile(val name: String, val directory: Boolean)
+internal data class AgentFolder(val path: String, val parent: String?, val items: List<AgentFile>)
+internal data class AgentUpload(val name: String, val path: String)
 private data class AgentPendingAttachment(val name: String, val uri: Uri)
 private fun youkaiGreetingForHour(hour: Int): String = when (hour) {
     in 5..11 -> "早上好，法厄同"
@@ -316,7 +311,7 @@ private fun AgentHoldEye(size: androidx.compose.ui.unit.Dp, modifier: Modifier =
     }
 }
 
-private class AgentConnection(private val settings: SecureSettings) {
+internal class AgentConnection(private val settings: SecureSettings) {
     private val socketClient = OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS).build()
     @Volatile private var followSocket: WebSocket? = null
     private val base: String
@@ -482,36 +477,11 @@ private class AgentConnection(private val settings: SecureSettings) {
 class AgentActivity : ComponentActivity() {
     private var balancePlayer: MediaPlayer? = null
     private var activeVoiceInput: ParaformerVoiceInput? = null
-    @Volatile private var agentVisible = true
-    private var lastProgressNotification = 0L
 
-    private fun showAgentNotification(sessionId: String, text: String, approval: AgentApproval? = null) {
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
-        if (agentVisible || sessionId.isBlank()) return
-        val now = System.currentTimeMillis()
-        if (approval == null && now - lastProgressNotification < 900) return
-        lastProgressNotification = now
+    private fun notificationsEnabled(): Boolean {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return false
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.createNotificationChannel(NotificationChannel(AGENT_CHANNEL, "YOUKAI 任务进展", NotificationManager.IMPORTANCE_DEFAULT))
-        val open = PendingIntent.getActivity(this, 0, Intent(this, AgentActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-        }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val preview = approval?.reason?.ifBlank { "${approval.toolName} 请求越权执行" } ?: text.takeLast(250).ifBlank { "YOUKAI 正在处理任务" }
-        val builder = Notification.Builder(this, AGENT_CHANNEL).setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(if (approval == null) "YOUKAI · 任务进展" else "YOUKAI · 等待审批")
-            .setContentText(preview).setStyle(Notification.BigTextStyle().bigText(preview))
-            .setContentIntent(open).setAutoCancel(approval == null).setOnlyAlertOnce(true)
-        if (approval != null) {
-            for ((allow, label) in listOf(false to "拒绝", true to "允许一次")) {
-                val action = Intent(this, AgentApprovalReceiver::class.java).apply {
-                    putExtra("session", sessionId); putExtra("approval", approval.id); putExtra("allow", allow)
-                }
-                val pending = PendingIntent.getBroadcast(this, approval.id.hashCode() * 2 + if (allow) 1 else 0,
-                    action, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-                builder.addAction(Notification.Action.Builder(null, label, pending).build())
-            }
-        }
-        manager.notify(AGENT_NOTIFICATION, builder.build())
+        return manager.areNotificationsEnabled() && manager.getNotificationChannel(AGENT_CHANNEL)?.importance != NotificationManager.IMPORTANCE_NONE
     }
 
     private fun stopBalanceVoice() {
@@ -549,14 +519,7 @@ class AgentActivity : ComponentActivity() {
         super.onPause()
     }
 
-    override fun onResume() {
-        super.onResume()
-        agentVisible = true
-        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(AGENT_NOTIFICATION)
-    }
-
     override fun onStop() {
-        agentVisible = false
         activeVoiceInput?.let { if (it.recording) it.finish(true) }
         super.onStop()
     }
@@ -589,7 +552,7 @@ class AgentActivity : ComponentActivity() {
                 settingsOpenedFromDrawer = false
             }
             var sessions by remember { mutableStateOf(emptyList<AgentSession>()) }
-            var selected by remember { mutableStateOf("") }
+            var selected by remember { mutableStateOf(intent.getStringExtra("sessionId").orEmpty()) }
             var items by remember { mutableStateOf(emptyList<AgentItem>()) }
             var loadingHistory by remember { mutableStateOf(false) }
             var loadedSession by remember { mutableStateOf("") }
@@ -697,6 +660,7 @@ class AgentActivity : ComponentActivity() {
             DisposableEffect(Unit) { onDispose { api.close() } }
 
             fun newTask() {
+                AgentMonitorService.stop(this@AgentActivity)
                 stopBalanceVoice()
                 eyeCardOpen = false
                 balanceRequestSerial++
@@ -766,9 +730,6 @@ class AgentActivity : ComponentActivity() {
                     val requests = withContext(Dispatchers.IO) { api.approvals(target) }
                     if (selected == target) {
                         pendingApproval = requests.firstOrNull()
-                        pendingApproval?.let { showAgentNotification(target, liveText, it) }
-                        if (pendingApproval == null && !agentVisible)
-                            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(AGENT_NOTIFICATION)
                     }
                 } catch (e: Exception) { if (selected == target) error = agentConnectionError(e) }
             }
@@ -830,12 +791,14 @@ class AgentActivity : ComponentActivity() {
                         pendingPrompt = text.trim().ifBlank { "已发送 ${attachments.size} 个附件" }
                         interruptedSession = ""
                         interruptedText = ""
+                        AgentMonitorService.monitor(this@AgentActivity, selected)
                         withContext(Dispatchers.IO) { api.send(selected, text.trim(), receipts) }
                         draft = ""
                         pendingUploads.clear()
                         refreshSelected()
                         refreshList()
                     } catch (e: Exception) {
+                        AgentMonitorService.stop(this@AgentActivity)
                         pendingPrompt = ""
                         error = e.message ?: "发送失败"
                     } finally { busy = false }
@@ -907,6 +870,7 @@ class AgentActivity : ComponentActivity() {
             fun cancelTask() {
                 val session = selected
                 if (session.isBlank()) return
+                AgentMonitorService.stop(this@AgentActivity)
                 scope.launch {
                     try {
                         withContext(Dispatchers.IO) { api.cancel(session) }
@@ -925,7 +889,13 @@ class AgentActivity : ComponentActivity() {
             val requestMicrophone = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
                 if (it) voiceInput.prepare() else voiceStatus = "需要麦克风权限"
             }
-            val requestNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+            var notificationsGranted by remember { mutableStateOf(notificationsEnabled()) }
+            val requestNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+                notificationsGranted = it && notificationsEnabled()
+            }
+            val notificationSettings = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+                notificationsGranted = notificationsEnabled()
+            }
             LaunchedEffect(Unit) {
                 if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
                     requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -960,7 +930,6 @@ class AgentActivity : ComponentActivity() {
                                 if (streamReducer.apply(frame)) {
                                     liveText = streamReducer.text
                                     liveReasoning = streamReducer.reasoning
-                                    if (liveText.isNotBlank()) showAgentNotification(followingSession, liveText)
                                 }
                                 val eventType = frame.optJSONObject("event")?.optString("type")
                                 if (eventType == "user/message" && interruptedSession == followingSession && pendingPrompt.isBlank()) {
@@ -1204,6 +1173,10 @@ class AgentActivity : ComponentActivity() {
                     }
                 }
                 if (error.isNotBlank()) Text(error, color = YoukaiTokens.accent, fontSize = 12.sp)
+                if (!notificationsGranted) Text("开启通知以接收后台进展与审批  ›", color = YoukaiTokens.accent,
+                    fontSize = 12.sp, modifier = Modifier.clickable {
+                        notificationSettings.launch(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
+                    }.padding(bottom = 8.dp))
                 if (tokenReady) Row(Modifier.fillMaxWidth().padding(start = 4.dp, bottom = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (selected.isBlank()) {
@@ -1291,7 +1264,9 @@ class AgentActivity : ComponentActivity() {
                                 Text(session.title, color = if (session.id == selected) YoukaiTokens.accent else YoukaiTokens.text,
                                     maxLines = 2, modifier = Modifier.fillMaxWidth().clickable {
                                         stopBalanceVoice(); eyeCardOpen = false; balanceRequestSerial++
+                                        AgentMonitorService.stop(this@AgentActivity)
                                         items = emptyList(); loadedSession = ""; expanded.clear(); selected = session.id; listOpen = false; pendingPrompt = ""; liveText = ""; liveReasoning = ""
+                                        if (session.running) AgentMonitorService.monitor(this@AgentActivity, session.id)
                                     }.padding(vertical = 8.dp))
                             }
                         }
