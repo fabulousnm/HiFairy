@@ -341,7 +341,13 @@ internal class AgentConnection(private val settings: SecureSettings, private val
         val connection = open(path, method, body)
         try {
             val code = connection.responseCode
-            if (code !in 200..299) throw IllegalStateException("Agent 服务返回 $code")
+            if (code !in 200..299) {
+                val detail = runCatching { JSONObject(connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "{}")
+                    .optString("detail") }.getOrDefault("")
+                if (code == 503 && detail == "bridge_unavailable")
+                    throw IllegalStateException("电脑 DSH 桥接未启动，请检查 DSH 插件和本机 18765 端口")
+                throw IllegalStateException("Agent 服务返回 $code${if (detail.isNotBlank()) "：$detail" else ""}")
+            }
             return JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
         } finally { connection.disconnect() }
     }

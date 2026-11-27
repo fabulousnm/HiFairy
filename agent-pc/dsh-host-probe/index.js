@@ -6,7 +6,7 @@ import { listWorkspaceDirectory, uploadWorkspaceFile, downloadWorkspaceFile,
   listComputerRoots, listComputerDirectory, uploadComputerFile, downloadComputerFile } from './workspace-files.js'
 
 export const name = 'hifairy-dsh-host-probe'
-export const inject = ['sessionController', 'workspaceRegistry', 'agentPresets', 'fileUploads', 'sessions', 'permissionPresets', 'tools']
+export const inject = ['sessionController', 'workspaceRegistry', 'agentPresets', 'fileUploads', 'sessions', 'permissionPresets']
 
 function authorized(request, token) {
   const candidate = request.headers.authorization?.replace(/^Bearer /, '') ?? ''
@@ -100,6 +100,9 @@ export function createProbeServer(controller, token, options = {}) {
       catch (error) { return respond(response, 503, { error: 'permissions_unavailable', detail: String(error?.message ?? error) }) }
     }
     const parsed = new URL(request.url ?? '/', 'http://localhost')
+    const phoneProbeMatch = /^\/sessions\/(session-[a-z0-9-]+)\/phone-workspace-probe$/.exec(parsed.pathname)
+    if (phoneProbeMatch && request.method === 'POST')
+      return respond(response, 200, await phoneWorkspace.offer(phoneProbeMatch[1]))
     const phoneResultMatch = /^\/sessions\/(session-[a-z0-9-]+)\/phone-workspace-result$/.exec(parsed.pathname)
     if (phoneResultMatch && request.method === 'POST') {
       try {
@@ -350,17 +353,4 @@ export function apply(ctx, config) {
     return () => server.close()
   })
   ctx.on('approval/request', (request, next) => bridgeOptions.approvalBridge.offer(request, next), true)
-  ctx.effect(() => ctx.tools.register({
-    name: 'hifairy_phone_workspace_probe',
-    description: '用户明确要求测试手机本地挂载工作区时使用。仅在当前手机 Agent 会话前台执行：列出少量文件名、拒绝越界路径，并创建和覆盖一个 HiFairy-agent-test- 前缀的测试文本。不会修改其他文件。',
-    parameters: { type: 'object', properties: {}, additionalProperties: false },
-    output: { schema: { type: 'object', properties: { text: { type: 'string', required: true } }, additionalProperties: false },
-      render: (_args, value) => [{ type: 'text', text: value.text }] },
-    timeoutMs: 35000,
-    execute: (_args, exec) => {
-      const sessionId = exec?.agent?.session?.id
-      if (!sessionId) return { text: '无法识别当前 DSH 会话。' }
-      return bridgeOptions.phoneWorkspace.offer(sessionId)
-    }
-  }))
 }

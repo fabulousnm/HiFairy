@@ -4,6 +4,6 @@
   "type": "module",
   "private": true,
   "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
-  "exports": { ".": "./index.js" },
+  "exports": { ".": "./index.js", "./phone-workspace-tool": "./phone-workspace-tool.js" },
   "scripts": { "test": "node --test" }
 }

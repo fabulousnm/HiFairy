@@ -18,6 +18,9 @@ test('phone workspace probe is delivered only to the active session and returns 
   const abort = new AbortController()
   try {
     assert.match((await options.phoneWorkspace.offer('session-other')).text, /没有打开/)
+    const offline = await fetch(`${base}/sessions/session-other/phone-workspace-probe`, { method: 'POST', headers })
+    assert.equal(offline.status, 200)
+    assert.match((await offline.json()).text, /没有打开/)
     const stream = await fetch(`${base}/sessions/session-test/events`, { headers, signal: abort.signal })
     assert.equal(stream.status, 200)
     const reader = stream.body.getReader()
