@@ -42,9 +42,9 @@ internal class PhoneWorkspaceStore(private val context: Context) {
             val parentId = DocumentsContract.getTreeDocumentId(tree)
             val parent = DocumentsContract.buildDocumentUriUsingTree(tree, parentId)
             val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId)
-            val names = mutableListOf<String>()
+            var count = 0
             resolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { cursor ->
-                while (cursor.moveToNext() && names.size < 20) names.add(cursor.getString(0))
+                while (cursor.moveToNext()) count++
             } ?: error("无法读取目录")
             stage = "验证越界拦截"
             check(runCatching { checkedName("../outside.txt") }.isFailure)
@@ -57,10 +57,69 @@ internal class PhoneWorkspaceStore(private val context: Context) {
             stage = "覆盖写入与读回"
             resolver.openOutputStream(file, "wt")?.use { it.write("Agent workspace updated".toByteArray()) } ?: error("无法覆盖")
             check(resolver.openInputStream(file)?.bufferedReader()?.use { it.readText() } == "Agent workspace updated")
-            "手机工作区探针通过：列出 ${names.size} 个文件名（最多 20 个）；越界路径已拒绝；仅创建并覆盖 $name，读回一致。"
+            "手机工作区探针通过：目录共有 $count 个条目；越界路径已拒绝；仅创建并覆盖 $name，读回一致。可调用 hifairy_phone_workspace_files 分页查看全部文件名。"
         } catch (error: Exception) {
             "手机工作区探针失败，阶段：$stage；${error.javaClass.simpleName}: ${error.message}"
         }
+    }
+
+    fun listPage(offset: Int): String {
+        val tree = authorizedTree() ?: return "手机工作区未挂载或授权已失效。"
+        require(offset >= 0 && offset <= 1000000) { "无效分页位置" }
+        val id = DocumentsContract.getTreeDocumentId(tree)
+        val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, id)
+        val page = mutableListOf<String>()
+        var count = 0
+        resolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { cursor ->
+            while (cursor.moveToNext()) {
+                if (count >= offset && page.size < 80) page.add(cursor.getString(0).take(120))
+                count++
+            }
+        } ?: error("无法列目录")
+        val next = if (offset + page.size < count) offset + page.size else null
+        return "手机工作区文件名：总数 $count；本页从 $offset 开始，共 ${page.size} 项。\n${page.joinToString("\n")}\n${if (next == null) "已到末页" else "下一页 offset=$next"}"
+    }
+
+    fun testWrite(name: String, content: String): String {
+        val tree = authorizedTree() ?: return "手机工作区未挂载或授权已失效。"
+        checkedName(name)
+        require(content.length <= 2000) { "测试文本过长" }
+        val parentId = DocumentsContract.getTreeDocumentId(tree)
+        val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId)
+        var documentId: String? = null
+        resolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_MIME_TYPE), null, null, null)?.use { cursor ->
+            while (cursor.moveToNext()) if (cursor.getString(0) == name) {
+                require(cursor.getString(2) == "text/plain") { "目标不是测试文本文件" }
+                documentId = cursor.getString(1)
+                break
+            }
+        } ?: error("无法列目录")
+        val id = documentId ?: return "指定测试文件不存在：$name。请先运行固定探针创建文件。"
+        val file = DocumentsContract.buildDocumentUriUsingTree(tree, id)
+        val before = resolver.openInputStream(file)?.use { stream ->
+            val buffer = ByteArray(8193)
+            var used = 0
+            while (used < buffer.size) {
+                val count = stream.read(buffer, used, buffer.size - used)
+                if (count < 0) break
+                used += count
+            }
+            require(used <= 8192) { "测试文件超过 8 KiB，拒绝覆盖" }
+            String(buffer, 0, used, Charsets.UTF_8)
+        } ?: error("无法读取测试文件")
+        require(before.startsWith("Agent workspace ") || before.startsWith("HiFairy agent test ")) {
+            "测试文件内容不符合本应用标记，拒绝覆盖"
+        }
+        val value = "HiFairy agent test $content"
+        resolver.openOutputStream(file, "wt")?.use { it.write(value.toByteArray(Charsets.UTF_8)) } ?: error("无法覆盖")
+        check(resolver.openInputStream(file)?.bufferedReader()?.use { it.readText() } == value) { "覆盖后读回不一致" }
+        return "指定文件覆盖并读回成功：$name；原内容长度 ${before.length}，新内容长度 ${value.length}。"
+    }
+
+    private fun authorizedTree(): Uri? = mountedUri()?.takeIf { tree ->
+        resolver.persistedUriPermissions.any { it.uri == tree && it.isReadPermission && it.isWritePermission }
     }
 
     private fun checkedName(name: String): String {

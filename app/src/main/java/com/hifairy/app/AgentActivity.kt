@@ -394,9 +394,17 @@ internal class AgentConnection(private val settings: SecureSettings, private val
     }
     private fun answerPhoneWorkspace(sessionId: String, frame: JSONObject) {
         val id = frame.optString("id")
-        if (!id.matches(Regex("[a-f0-9-]{36}")) || frame.optString("action") != "probe") return
+        if (!id.matches(Regex("[a-f0-9-]{36}"))) return
         Thread {
-            val result = PhoneWorkspaceStore(context).probe()
+            val result = runCatching {
+                val store = PhoneWorkspaceStore(context)
+                when (frame.optString("action")) {
+                    "probe" -> store.probe()
+                    "list" -> store.listPage(frame.getInt("offset"))
+                    "test_write" -> store.testWrite(frame.getString("name"), frame.getString("content"))
+                    else -> "未知手机工作区请求，已拒绝。"
+                }
+            }.getOrElse { "手机工作区操作失败：${it.javaClass.simpleName}: ${it.message}" }
             runCatching {
                 request("/sessions/$sessionId/phone-workspace-result", "POST",
                     JSONObject().put("id", id).put("text", result).toString())

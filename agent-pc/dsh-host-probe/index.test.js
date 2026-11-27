@@ -39,6 +39,26 @@ test('phone workspace probe is delivered only to the active session and returns 
     })
     assert.equal(accepted.status, 200)
     assert.deepEqual(await waiting, { text: 'probe ok' })
+    const invalidCommand = fetch(`${base}/sessions/session-test/phone-workspace-command`, {
+      method: 'POST', headers, body: JSON.stringify({ action: 'test_write', name: '../outside.txt', content: 'bad' })
+    })
+    const nextFrame = await reader.read()
+    const nextId = new TextDecoder().decode(nextFrame.value).match(/"id":"([a-f0-9-]{36})"/)
+    assert.ok(nextId)
+    const nextPayload = new TextDecoder().decode(nextFrame.value)
+    assert.match(nextPayload, /test_write/)
+    assert.match(nextPayload, /outside\.txt/)
+    const completed = await fetch(`${base}/sessions/session-test/phone-workspace-result`, {
+      method: 'POST', headers, body: JSON.stringify({ id: nextId[1], text: 'rejected by phone' })
+    })
+    assert.equal(completed.status, 200)
+    const commandResult = await invalidCommand
+    assert.equal(commandResult.status, 200)
+    assert.match((await commandResult.json()).text, /rejected by phone/)
+    const malformed = await fetch(`${base}/sessions/session-test/phone-workspace-command`, {
+      method: 'POST', headers, body: JSON.stringify({ action: 'delete', name: 'file' })
+    })
+    assert.equal(malformed.status, 400)
     await reader.cancel()
   } finally {
     abort.abort()

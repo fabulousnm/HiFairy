@@ -199,9 +199,9 @@ class WorkspaceLabActivity : Activity() {
             val result = try {
                 val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
                 val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
-                val names = mutableListOf<String>()
+                var count = 0
                 contentResolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { cursor ->
-                    while (cursor.moveToNext() && names.size < 20) names.add(cursor.getString(0))
+                    while (cursor.moveToNext()) count++
                 } ?: throw IllegalStateException("目录列表不可读取")
                 stage = "拒绝越界路径"
                 val escaped = runCatching { checkedAgentName("../outside.txt") }.isFailure
@@ -216,7 +216,7 @@ class WorkspaceLabActivity : Activity() {
                 stage = "覆盖写入和读回"
                 write(file, "Agent workspace updated")
                 if (read(file) != "Agent workspace updated") throw IllegalStateException("覆盖读回不一致")
-                "Agent 文件工具探针通过 ✓\n目录现有条目（最多 20 个）：${names.joinToString().ifBlank { "空" }}\n越界路径：已拒绝 ✓\n测试文件：$name\n创建、覆盖和读回：成功 ✓\n此探针在本机执行，不代表电脑 DSH 已能直接调用手机文件工具。"
+                "Agent 文件工具探针通过 ✓\n目录现有条目总数：$count\n越界路径：已拒绝 ✓\n测试文件：$name\n创建、覆盖和读回：成功 ✓\n此探针在本机执行。"
             } catch (error: Exception) {
                 "Agent 文件工具探针失败，阶段：$stage\n${error.javaClass.simpleName}: ${error.message}"
             }

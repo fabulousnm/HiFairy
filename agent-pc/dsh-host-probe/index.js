@@ -35,7 +35,7 @@ export function createProbeServer(controller, token, options = {}) {
   const approvals = new Map()
   const phoneRequests = new Map()
   const phoneWorkspace = {
-    offer(sessionId) {
+    offer(sessionId, command = { action: 'probe' }) {
       const active = clients.get(sessionId)
       if (!active?.size) return Promise.resolve({ text: '手机当前没有打开该 Agent 会话，无法执行手机工作区测试。' })
       const id = randomUUID()
@@ -45,7 +45,7 @@ export function createProbeServer(controller, token, options = {}) {
           resolve({ text: '手机工作区请求超时。请保持该 Agent 会话在手机前台。' })
         }, 30000)
         phoneRequests.set(id, { sessionId, resolve, timer })
-        const frame = `data: ${JSON.stringify({ type: 'phone-workspace-request', id, action: 'probe' })}\n\n`
+        const frame = `data: ${JSON.stringify({ type: 'phone-workspace-request', id, ...command })}\n\n`
         for (const client of active) client.write(frame)
       })
     }
@@ -103,12 +103,25 @@ export function createProbeServer(controller, token, options = {}) {
     const phoneProbeMatch = /^\/sessions\/(session-[a-z0-9-]+)\/phone-workspace-probe$/.exec(parsed.pathname)
     if (phoneProbeMatch && request.method === 'POST')
       return respond(response, 200, await phoneWorkspace.offer(phoneProbeMatch[1]))
+    const phoneCommandMatch = /^\/sessions\/(session-[a-z0-9-]+)\/phone-workspace-command$/.exec(parsed.pathname)
+    if (phoneCommandMatch && request.method === 'POST') {
+      try {
+        const body = await readJson(request)
+        if (body.action === 'list' && Number.isInteger(body.offset) && body.offset >= 0 && body.offset <= 1000000)
+          return respond(response, 200, await phoneWorkspace.offer(phoneCommandMatch[1], { action: 'list', offset: body.offset }))
+        if (body.action === 'test_write' && typeof body.name === 'string' && body.name.length <= 64 &&
+            typeof body.content === 'string' && body.content.length <= 2000)
+          return respond(response, 200, await phoneWorkspace.offer(phoneCommandMatch[1],
+            { action: 'test_write', name: body.name, content: body.content }))
+        return respond(response, 400, { error: 'invalid_phone_command' })
+      } catch (error) { return respond(response, 400, { error: String(error?.message ?? error) }) }
+    }
     const phoneResultMatch = /^\/sessions\/(session-[a-z0-9-]+)\/phone-workspace-result$/.exec(parsed.pathname)
     if (phoneResultMatch && request.method === 'POST') {
       try {
         const body = await readJson(request)
         const pending = phoneRequests.get(body.id)
-        if (!pending || pending.sessionId !== phoneResultMatch[1] || typeof body.text !== 'string' || body.text.length > 4000)
+        if (!pending || pending.sessionId !== phoneResultMatch[1] || typeof body.text !== 'string' || body.text.length > 16000)
           return respond(response, 400, { error: 'invalid_phone_result' })
         clearTimeout(pending.timer)
         phoneRequests.delete(body.id)
