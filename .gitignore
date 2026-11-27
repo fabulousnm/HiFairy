@@ -2,6 +2,7 @@
 .idea/
 build/
 app/build/
+workspace-lab/build/
 local.properties
 *.iml
 *.keystore

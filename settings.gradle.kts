@@ -4,3 +4,4 @@ rootProject.name = "HiFairy"
 include(":app")
 include(":voice-lab")
 include(":tts-lab")
+include(":workspace-lab")
